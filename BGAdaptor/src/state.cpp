@@ -30,6 +30,7 @@ bool haloControls;
 bool haloPlayIcon = false;
 bool lineInActive = false;
 bool speakerExpanded = false;
+unsigned long expandDueAt = 0;
 bool waitingForPlay = false;
 bool mqttConnected = false;
 

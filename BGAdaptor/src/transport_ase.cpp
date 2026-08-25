@@ -192,6 +192,7 @@ void processSSE(String message) {
             Serial.println("🛑 Standby mode detected (empty SOURCE data).");
             lineInActive = false;
             speakerExpanded = false;   // product left the source; any expansion is gone
+            expandDueAt = 0;
             playbackState = STOPPED;
             sendHexCommand(STANDBY);
             if (haloClient.available()) {
@@ -226,6 +227,7 @@ void processSSE(String message) {
                 Serial.println("❌ Line-in deactivated!");
                 lineInActive = false;
                 speakerExpanded = false;   // product left the source; any expansion is gone
+                expandDueAt = 0;
                 if (haloClient.available()) {
                     updateHaloPlayback(false, "");  
                 }                             

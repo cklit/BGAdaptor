@@ -674,6 +674,13 @@ document.getElementById('save-btn').addEventListener('click',function(){
 }
 
 void handleUpdatePlaybackSpeaker() {
+    // A different speaker means a different expansion. Release whatever is
+    // currently joined (this still uses the old JID) and clear the flag —
+    // otherwise expandToPlaybackSpeaker() sees speakerExpanded and skips the
+    // newly selected speaker until the next reboot.
+    if (speakerExpanded) unexpandPlaybackSpeaker();
+    speakerExpanded = false;
+
     playbackJid  = server.hasArg("jid")  ? server.arg("jid")  : "";
     playbackName = server.hasArg("name") ? server.arg("name") : "";
     playbackSerial = server.hasArg("serial") ? server.arg("serial") : "";
@@ -692,6 +699,7 @@ void handleStatus() {
     jsonResponse += "\"product_serial\":\"" + productSerial + "\",";
     jsonResponse += "\"product_name\":\"" + productName + "\",";
     jsonResponse += "\"playback_speaker\":\"" + playbackName + "\",";
+    jsonResponse += "\"playback_jid\":\"" + playbackJid + "\",";
     jsonResponse += "\"beogram_state\":\"" + beogramStateText + "\",";
     jsonResponse += "\"beogram_track\":\"" + beogramTrack + "\",";
     jsonResponse += String("\"beogram_playing\":") + (beogramPlaying ? "true" : "false") + ",";

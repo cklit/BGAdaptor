@@ -283,6 +283,7 @@ void loop() {
     connectToHalo();
     checkPingWebsocket();
     checkProductRecovery();
+    checkPendingExpand();
     handleSerial1Data();
     webpushLoop();
     server.handleClient();

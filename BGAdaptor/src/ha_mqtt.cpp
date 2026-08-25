@@ -33,16 +33,27 @@ HABinarySensor bgPlaying(idPlaying);
 
 void checkMQTTConnection(bool forceNow) {
     if (!mqtt.isConnected() && mqttIP.length() > 0) {
-        if (forceNow || millis() - mqttLastReconnectAttempt > reconnectInterval) {
+        if (forceNow || millis() - mqttLastReconnectAttempt > mqttReconnectDelay) {
             mqttLastReconnectAttempt = millis();
             IPAddress broker;
             if (broker.fromString(mqttIP)) {
                 Serial.println(forceNow ? "⚡ Initial MQTT connect..." : "🔁 Attempting MQTT reconnect...");
                 mqtt.begin(broker, mqttUser.c_str(), mqttPassword.c_str());
+
+                // An unreachable broker blocks the loop on every attempt, so
+                // slow down after each failure and reset once connected.
+                if (mqtt.isConnected()) {
+                    mqttReconnectDelay = reconnectInterval;
+                } else {
+                    mqttReconnectDelay = min(mqttReconnectDelay * 2, reconnectMaxInterval);
+                    Serial.println("Next MQTT retry in " + String(mqttReconnectDelay / 1000) + "s");
+                }
             } else {
                 Serial.println("⚠️ Invalid MQTT broker IP format (connect attempt skipped)");
             }
         }
+    } else if (mqtt.isConnected()) {
+        mqttReconnectDelay = reconnectInterval;
     }
     mqttConnected = mqtt.isConnected(); // Always keep it updated
 }

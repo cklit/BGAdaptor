@@ -10,3 +10,4 @@ void sendHexCommand(BeogramCommand command);
 void processBuffer(BeogramFeedback state);
 void handleSerial1Data();
 void sendPlayAfterDelay();
+void checkStoppedTrackTimeout();

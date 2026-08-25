@@ -120,6 +120,7 @@ void processWebSocketMessage(const String& message) {
         } else {
             lineInActive = false;
             speakerExpanded = false;   // product left the source; any expansion is gone
+            expandDueAt = 0;
             Serial.println("❌ Source changed, Line-in deactivated");
             if (playbackState == PLAYING) {
                 playbackState = PAUSED;
