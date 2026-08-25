@@ -133,6 +133,10 @@ void setup() {
 
     productIP = preferences.getString("productIP", "");
     productSerial = preferences.getString("productSerial", "");
+    productName = preferences.getString("productName", "");
+    playbackJid = preferences.getString("playbackJid", "");
+    playbackName = preferences.getString("playbackName", "");
+    playbackSerial = preferences.getString("playbackSerial", "");
     haloIP = preferences.getString("haloIP", "");
     haloSerial = preferences.getString("haloSerial", "");
     haloControls = preferences.getBool("feature_enabled", false);

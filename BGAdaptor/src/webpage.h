@@ -98,6 +98,7 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     .info-text{display:none;font-size:12px;color:#888;margin-top:6px}
     .action-row{display:flex;gap:8px;margin-top:.75rem;flex-wrap:wrap}
     .hint{font-size:12px;color:#888;margin-top:.5rem}
+    .optional{font-size:11px;color:#999;font-weight:400;margin-left:6px;text-transform:uppercase;letter-spacing:.03em}
     .settings-row{display:flex;align-items:center;gap:10px}
     .settings-row .summary{margin-left:6px}
     .settings-label{font-size:15px;font-weight:500}
@@ -191,7 +192,7 @@ static const char* htmlPage PROGMEM = R"rawliteral(
       </div>
     </div>
     <div class="status-row" id="product-serial-row" style="display:none">
-      <span class="status-label">Serial number</span>
+      <span class="status-label">Product</span>
       <span class="ip-chip" id="product-serial"></span>
     </div>
     <div class="status-row" id="product-platform-row" style="display:none">
@@ -212,6 +213,12 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     <div class="select-row" style="margin-bottom:0">
       <label for="sourceSelect">Input source</label>
       <select id="sourceSelect"></select>
+    </div>
+    <div id="playback-speaker-row" style="display:none">
+      <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
+        <label>Secondary playback speaker <span class="optional">Optional</span></label>
+        <a href="/playback-speaker"><button class="btn" id="playback-speaker-btn">None</button></a>
+      </div>
     </div>
     <div class="action-row" id="product-action-row" style="display:none">
       <button class="btn btn-danger" id="product-unlink-btn">Unlink product</button>
@@ -425,12 +432,17 @@ function updateStatus(){
     document.getElementById('product-ip').textContent=hasProduct?d.product_ip:'—';
     let sn=d.product_serial||'';
     document.getElementById('product-serial-row').style.display=hasProduct?'flex':'none';
-    document.getElementById('product-serial').textContent=sn||'N/A. Manually added';
+    let pn=d.product_name||'';
+    document.getElementById('product-serial').textContent=
+      pn ? (sn ? pn+' - '+sn : pn) : 'N/A. Manually added';
     document.getElementById('product-platform-row').style.display=hasProduct?'flex':'none';
     document.getElementById('product-platform').textContent=PLATFORM_LABELS[d.platform]||d.platform||'';    
     document.getElementById('product-linked-rows').style.display=hasProduct?'block':'none';
     document.getElementById('product-connect-form').style.display=hasProduct?'none':'flex';
     document.getElementById('product-action-row').style.display=hasProduct?'flex':'none';
+    // Secondary playback speaker is only meaningful once the product is reachable.
+    document.getElementById('playback-speaker-row').style.display=d.product_connected?'block':'none';
+    document.getElementById('playback-speaker-btn').textContent=d.playback_speaker||'None';
 
     let hasHalo=d.halo_ip&&d.halo_ip!=='';
     document.getElementById('halo-ip').textContent=hasHalo?d.halo_ip:'—';
@@ -446,7 +458,7 @@ function updateStatus(){
 document.getElementById('product-connect-btn').addEventListener('click',function(){
   let sel=document.getElementById('discover-results');
   let err=document.getElementById('productIP-error');
-  let ip,discovered=null,name='';
+  let ip,discovered=null,name='',friendly='';
   if(sel.value==='__manual__'){
     ip=document.getElementById('productIP').value.trim();
     if(!validateIP(ip)){err.style.display='block';return;}
@@ -455,6 +467,7 @@ document.getElementById('product-connect-btn').addEventListener('click',function
     ip=sel.value;
     discovered=discoveredDevices[ip];
     name=(discoveredMeta[ip]||{}).serial||'';
+    friendly=(discoveredMeta[ip]||{}).name||'';
   }else{
     return;
   }
@@ -462,12 +475,12 @@ document.getElementById('product-connect-btn').addEventListener('click',function
   if(discovered&&discovered!==currentPlatform){
     let label=discovered==='mozart'?'Mozart':'ASE';
     if(!confirm('This is a '+label+' product. The adaptor will switch platform and restart. Continue?'))return;
-    fetch('/update-platform?platform='+discovered+'&productIP='+encodeURIComponent(ip)+'&productSerial='+encodeURIComponent(name)).catch(()=>{});
+    fetch('/update-platform?platform='+discovered+'&productIP='+encodeURIComponent(ip)+'&productSerial='+encodeURIComponent(name)+'&productName='+encodeURIComponent(friendly)).catch(()=>{});
     document.getElementById('product-platform-label').textContent='Restarting\u2026';
     setTimeout(()=>location.reload(),8000);
     return;
   }
-  fetch('/update?productIP='+encodeURIComponent(ip)+(name?'&productSerial='+encodeURIComponent(name):'')).then(updateStatus);
+  fetch('/update?productIP='+encodeURIComponent(ip)+(name?'&productSerial='+encodeURIComponent(name):'')+(friendly?'&productName='+encodeURIComponent(friendly):'')).then(updateStatus);
 });
 
 document.getElementById('product-unlink-btn').addEventListener('click',function(){

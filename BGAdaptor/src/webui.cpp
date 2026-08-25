@@ -92,8 +92,10 @@ void handleUpdate() {
             }
             productIP = newIP;
             productSerial = "";
+            productName = "";
             preferences.putString("productIP", productIP);
             preferences.putString("productSerial", productSerial);
+            preferences.putString("productName", productName);
             server.send(200, "text/plain", "Unlinked product");
             Serial.println("Unlinked product."); 
             return;
@@ -108,6 +110,8 @@ void handleUpdate() {
         // entry sends none, which intentionally clears any old one.
         productSerial = server.hasArg("productSerial") ? server.arg("productSerial") : "";
         preferences.putString("productSerial", productSerial);
+        productName = server.hasArg("productName") ? server.arg("productName") : "";
+        preferences.putString("productName", productName);
 
         if (platform == PLATFORM_MOZART) {
             wsClient.close();
@@ -189,6 +193,7 @@ void handleUpdatePlatform() {
             if (newIP != "" && !isValidIPAddress(newIP)) newIP = "";
             preferences.putString("productIP", newIP);
             preferences.putString("productSerial", newIP != "" && server.hasArg("productSerial") ? server.arg("productSerial") : "");
+            preferences.putString("productName", newIP != "" && server.hasArg("productName") ? server.arg("productName") : "");
             preferences.putString("triggerSource", newPlatform == "mozart" ? "lineIn" : "LINE IN");
             server.send(200, "text/plain", "Platform updated. Restarting...");
             Serial.println("Platform changed to " + newPlatform + ". Restarting...");
@@ -248,7 +253,7 @@ void handleMqttReset() {
             <h2>MQTT settings cleared</h2>
             </div>
             <p class="sub">Restarting to apply changes&hellip;</p>
-            <a href="/mqtt" class="btn"><i class="ti ti-arrow-left" style="font-size:14px"></i>Back to MQTT</a>
+            <a href="/mqtt" class="btn"><svg class="ic" style="font-size:14px"><use href="#i-arrow-left"/></svg>Back to MQTT</a>
         </div>
         </div>
         </body>
@@ -308,7 +313,7 @@ void handleMqttUpdate() {
                 <h2>Settings saved</h2>
                 </div>
                 <p class="sub">Restarting to apply changes&hellip;</p>
-                <a href="/mqtt" class="btn"><i class="ti ti-arrow-left" style="font-size:14px"></i>Back to MQTT</a>
+                <a href="/mqtt" class="btn"><svg class="ic" style="font-size:14px"><use href="#i-arrow-left"/></svg>Back to MQTT</a>
             </div>
             </div>
             </body>
@@ -356,7 +361,7 @@ void handleMqttUpdate() {
                 <h2>Missing parameters</h2>
                 </div>
                 <p class="sub">Please fill in all fields and try again.</p>
-                <a href="/mqtt" class="btn"><i class="ti ti-arrow-left" style="font-size:14px"></i>Back to MQTT</a>
+                <a href="/mqtt" class="btn"><svg class="ic" style="font-size:14px"><use href="#i-arrow-left"/></svg>Back to MQTT</a>
             </div>
             </div>
             </body>
@@ -399,9 +404,9 @@ void handleMqttConfig() {
             .btn-danger{border-color:#f09595;color:#a32d2d}
             .btn-danger:hover{background:#fcebeb}
             @media(prefers-color-scheme:dark){.btn-danger{border-color:#793333;color:#f09595}.btn-danger:hover{background:#2a1a1a}}
-            .back-link{display:flex;align-items:center;gap:6px;font-size:13px;color:#666;text-decoration:none}
-            .back-link:hover{color:#111}
-            @media(prefers-color-scheme:dark){.back-link{color:#aaa}.back-link:hover{color:#eee}}
+            .back-link{display:flex;align-items:center;gap:8px;font-size:13px;color:#185fa5;text-decoration:none}
+            .back-link:hover{text-decoration:underline}
+            @media(prefers-color-scheme:dark){.back-link{color:#85b7eb}}
             .status-label{font-size:13px;color:#666}
             @media(prefers-color-scheme:dark){.status-label{color:#aaa}}
         </style>
@@ -437,7 +442,7 @@ void handleMqttConfig() {
         </div>
 
         <a href="/" class="card back-link">
-            <i class="ti ti-arrow-left" style="font-size:16px"></i>
+            <svg class="ic" style="font-size:16px"><use href="#i-arrow-left"/></svg>
             Back to main page
         </a>
         </div>
@@ -498,11 +503,195 @@ void handleUpdateHaloPlayIcon() {
     server.send(400, "text/plain", "Missing value");
 }
 
+
+// Secondary playback speaker sub-page: pick one speaker that joins the product's
+// Beolink experience when the deck starts playing. Reached from the product
+// card; scans via /discover-speakers (which excludes the linked product).
+void handlePlaybackSpeaker() {
+    server.send(200, "text/html", String(R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Secondary playback speaker</title>
+<style>)rawliteral") + PAGE_ICON_CSS + R"rawliteral(
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f0f0f0;padding:1.5rem 1rem;color:#111}
+@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#eee}}
+.page{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:1rem}
+.page-title{display:flex;align-items:center;gap:10px;padding:.25rem 0 .5rem}
+.page-title .ic{font-size:22px;color:#666}
+.page-title h1{font-size:18px;font-weight:500}
+.card{background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem 1.5rem}
+@media(prefers-color-scheme:dark){.card{background:#252525;border-color:#333}}
+.card-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem}
+.card-header .ic{font-size:18px;color:#888}
+.card-header h2{font-size:15px;font-weight:500}
+.status-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem}
+.status-label{font-size:13px;color:#666}
+@media(prefers-color-scheme:dark){.status-label{color:#aaa}}
+.chip{font-size:12px;font-family:monospace;color:#666;background:#f5f5f5;padding:2px 8px;border-radius:4px}
+@media(prefers-color-scheme:dark){.chip{background:#333;color:#bbb}}
+.input-row{display:flex;gap:8px;margin-top:8px}
+.btn{height:36px;padding:0 14px;font-size:13px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#111;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.btn:hover{background:#f5f5f5}
+@media(prefers-color-scheme:dark){.btn{background:#2a2a2a;border-color:#444;color:#eee}.btn:hover{background:#333}}
+.btn.scanning{animation:scanPulse 1.3s ease-in-out infinite}
+@keyframes scanPulse{0%,100%{background:#fff;border-color:#ddd;color:#666}50%{background:#e1f5ee;border-color:#1D9E75;color:#0f6e56}}
+@media(prefers-color-scheme:dark){@keyframes scanPulse{0%,100%{background:#2a2a2a;border-color:#444;color:#aaa}50%{background:#1e3d34;border-color:#1D9E75;color:#7fd9bb}}}
+@media(prefers-reduced-motion:reduce){.btn.scanning{animation:none;border-color:#1D9E75}}
+.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}
+.btn-highlight:hover{background:#178a65}
+@media(prefers-color-scheme:dark){.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}.btn-highlight:hover{background:#178a65}}
+select{width:100%;height:34px;padding:0 10px;font-size:13px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#111}
+@media(prefers-color-scheme:dark){select{background:#1a1a1a;border-color:#444;color:#eee}}
+label{font-size:13px;color:#666;display:block;margin-bottom:6px}
+@media(prefers-color-scheme:dark){label{color:#aaa}}
+p,li{font-size:13px;color:#666;line-height:1.55}
+@media(prefers-color-scheme:dark){p,li{color:#aaa}}
+ul{margin:.5rem 0 0 1.1rem}
+li{margin-bottom:.4rem}
+h3{font-size:13px;font-weight:600;margin:1rem 0 0;color:#111}
+@media(prefers-color-scheme:dark){h3{color:#eee}}
+a{color:#185fa5;text-decoration:none}
+a:hover{text-decoration:underline}
+@media(prefers-color-scheme:dark){a{color:#85b7eb}}
+.info-text{display:none;font-size:12px;color:#888;margin-top:6px}
+.back-link{display:flex;align-items:center;gap:8px;font-size:13px;color:#185fa5;text-decoration:none}
+.back-link:hover{text-decoration:underline}
+@media(prefers-color-scheme:dark){.back-link{color:#85b7eb}}
+</style>
+</head>
+<body>)rawliteral" + PAGE_SPRITE + R"rawliteral(
+<div class="page">
+  <div class="page-title">
+    <svg class="ic"><use href="#i-device-speaker"/></svg>
+    <h1>Secondary playback speaker</h1>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><svg class="ic"><use href="#i-device-speaker"/></svg><h2>Speaker</h2></div>
+    <div class="status-row">
+      <span class="status-label">Selected secondary playback speaker</span>
+      <span class="chip" id="current">)rawliteral" + (playbackName.length()
+        ? playbackName + (playbackSerial.length() ? " - " + playbackSerial : String(""))
+        : String("None")) + R"rawliteral(</span>
+    </div>
+    <label for="speaker">Choose a speaker</label>
+    <select id="speaker">
+      <option value="">None</option>
+    </select>
+    <div class="input-row">
+      <button class="btn" id="scan-btn"><svg class="ic"><use href="#i-radar-2"/></svg>&nbsp;Start product scan</button>
+    </div>
+    <span class="info-text" id="note">Scanning the network &mdash; this takes around 10 seconds&hellip;</span>
+    <div class="input-row">
+      <button class="btn" id="save-btn">Save</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>About this setting</h2></div>
+    <p>Some products are sources only and have no speakers of their own &mdash; for example Beosound Core and Beoconnect Core. Selecting a secondary playback speaker lets the adaptor expand the Beolink experience to a speaker automatically, so the Beogram is audible without starting the expansion by hand each time.</p>
+    <h3>What it does</h3>
+    <ul>
+      <li>When the deck starts playing, the selected speaker joins the product's Beolink experience.</li>
+      <li>When the deck is set to standby, the speaker leaves again.</li>
+      <li>Works with any product, not only source-only ones.</li>
+    </ul>
+    <h3>What it does not do</h3>
+    <ul>
+      <li><strong>Only one speaker.</strong> To play on several, expand from the Bang &amp; Olufsen app or Home Assistant instead.</li>
+      <li><strong>No control from the selected speaker.</strong> Its buttons, remote and app control the speaker, not the deck. Use Beoremote Halo, the <a href="/">BGAdaptor front page</a>, or Home Assistant to control playback.</li>
+      <li><strong>It interrupts.</strong> If the speaker is playing something else, it joins the Beogram experience anyway.</li>
+    </ul>
+  </div>
+
+  <a href="/" class="card back-link">
+    <svg class="ic" style="font-size:16px"><use href="#i-arrow-left"/></svg>
+    Back to main page
+  </a>
+</div>
+
+<script>
+let found={};
+let savedJid=)rawliteral" + String("'") + playbackJid + String("'") + R"rawliteral(;
+
+// Mirror the front page: the button that performs the pending action is
+// highlighted, so an unsaved selection is obvious.
+function refreshSaveHighlight(){
+  let dirty=document.getElementById('speaker').value!==savedJid;
+  document.getElementById('save-btn').classList.toggle('btn-highlight',dirty);
+}
+document.getElementById('speaker').addEventListener('change',refreshSaveHighlight);
+document.getElementById('scan-btn').addEventListener('click',function(){
+  let btn=this,note=document.getElementById('note');
+  btn.disabled=true;
+  btn.classList.add('scanning');
+  btn.innerHTML='<svg class="ic"><use href="#i-loader-2"/></svg>&nbsp;Scanning\u2026';
+  note.style.display='block';
+  fetch('/discover-speakers').then(r=>r.json()).then(d=>{
+    let sel=document.getElementById('speaker');
+    sel.innerHTML='<option value="">None</option>';
+    ((d&&d.devices)||[]).forEach(dev=>{
+      if(!dev.jid)return;                    // no JID means it cannot be expanded to
+      found[dev.jid]={name:dev.name,serial:dev.serial||''};
+      let o=document.createElement('option');
+      o.value=dev.jid;
+      o.textContent=(dev.serial? dev.name+' - '+dev.serial : dev.name)+' ('+dev.ip+')';
+      sel.appendChild(o);
+    });
+    if(savedJid&&found[savedJid])sel.value=savedJid;   // keep the saved speaker selected
+    refreshSaveHighlight();
+  }).catch(()=>{})
+  .finally(()=>{
+    btn.disabled=false;
+    btn.classList.remove('scanning');
+    btn.innerHTML='<svg class="ic"><use href="#i-radar-2"/></svg>&nbsp;Start product scan';
+    note.style.display='none';
+  });
+});
+
+document.getElementById('save-btn').addEventListener('click',function(){
+  let jid=document.getElementById('speaker').value,d=found[jid]||{name:'',serial:''};
+  fetch('/update-playback-speaker?jid='+encodeURIComponent(jid)
+        +'&name='+encodeURIComponent(d.name)+'&serial='+encodeURIComponent(d.serial))
+    .then(()=>{
+      document.getElementById('current').textContent=
+        d.name ? (d.serial ? d.name+' - '+d.serial : d.name) : 'None';
+      savedJid=jid;
+      let b=document.getElementById('save-btn');
+      b.classList.remove('btn-highlight');
+      b.textContent='Saved';
+      setTimeout(()=>{b.textContent='Save';refreshSaveHighlight();},1500);
+    });
+});
+</script>
+</body>
+</html>
+)rawliteral");
+}
+
+void handleUpdatePlaybackSpeaker() {
+    playbackJid  = server.hasArg("jid")  ? server.arg("jid")  : "";
+    playbackName = server.hasArg("name") ? server.arg("name") : "";
+    playbackSerial = server.hasArg("serial") ? server.arg("serial") : "";
+    preferences.putString("playbackJid", playbackJid);
+    preferences.putString("playbackName", playbackName);
+    preferences.putString("playbackSerial", playbackSerial);
+    Serial.println(playbackJid.length() ? "Secondary playback speaker set to " + playbackName
+                                        : "Secondary playback speaker cleared");
+    server.send(200, "text/plain", "OK");
+}
+
 void handleStatus() {
     String jsonResponse = "{";
     jsonResponse += "\"platform\":\"" + String(platform == PLATFORM_MOZART ? "mozart" : "ase") + "\",";
     jsonResponse += "\"product_ip\":\"" + productIP + "\",";
     jsonResponse += "\"product_serial\":\"" + productSerial + "\",";
+    jsonResponse += "\"product_name\":\"" + productName + "\",";
+    jsonResponse += "\"playback_speaker\":\"" + playbackName + "\",";
     jsonResponse += "\"beogram_state\":\"" + beogramStateText + "\",";
     jsonResponse += "\"beogram_track\":\"" + beogramTrack + "\",";
     jsonResponse += String("\"beogram_playing\":") + (beogramPlaying ? "true" : "false") + ",";
@@ -623,6 +812,9 @@ void registerWebRoutes() {
     server.on("/update-platform", HTTP_GET, handleUpdatePlatform);
     server.on("/discover", HTTP_GET, handleDiscover);
     server.on("/discover-halo", HTTP_GET, handleDiscoverHalo);
+    server.on("/discover-speakers", HTTP_GET, handleDiscoverSpeakers);
+    server.on("/playback-speaker", HTTP_GET, handlePlaybackSpeaker);
+    server.on("/update-playback-speaker", HTTP_GET, handleUpdatePlaybackSpeaker);
     
     server.on("/settings/reset-wifi", HTTP_GET, handleResetWifi);
     server.on("/settings/factory-reset", HTTP_GET, handleFactoryReset);

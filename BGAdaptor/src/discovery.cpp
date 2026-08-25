@@ -21,6 +21,27 @@
 //   ASE    — TXT "jid" embeds it: 8 digits starting at character 14
 //            (e.g. "2213.1200000.24680135@products..." → "24680135").
 // serialStart/serialLen slice the TXT value; serialLen 0 = whole value.
+// Read a TXT record by key, or "" when absent.
+static String txtValue(mdns_result_t* r, const char* key) {
+    if (key == nullptr) return "";
+    for (size_t t = 0; t < r->txt_count; t++) {
+        if (strcmp(r->txt[t].key, key) == 0 && r->txt[t].value != nullptr) {
+            return String(r->txt[t].value);
+        }
+    }
+    return "";
+}
+
+// A Beolink JID is <typenumber>.<itemnumber>.<serialnumber>@products.bang-olufsen.com
+// on both platforms. ASE publishes it whole in TXT "jid"; Mozart publishes the
+// three parts separately (tn / in / sn), so it has to be composed.
+static String buildJid(mdns_result_t* r, bool mozart) {
+    if (!mozart) return txtValue(r, "jid");
+    String tn = txtValue(r, "tn"), in = txtValue(r, "in"), sn = txtValue(r, "sn");
+    if (tn == "" || in == "" || sn == "") return "";   // incomplete — better empty than malformed
+    return tn + "." + in + "." + sn + "@products.bang-olufsen.com";
+}
+
 void collectService(const char* service, const char* nameKey,
                     const char* serialKey, int serialStart, int serialLen,
                     const char* platformTag, JsonArray& arr, String& seenIPs) {
@@ -70,6 +91,7 @@ void collectService(const char* service, const char* nameKey,
         d["name"]     = friendly;
         d["ip"]       = ip;
         d["serial"]   = serial;
+        d["jid"]      = buildJid(r, strcmp(platformTag, "mozart") == 0);
         d["platform"] = platformTag;
     }
     mdns_query_results_free(results);
@@ -90,6 +112,24 @@ void handleDiscover() {
 }
 
 // Beoremote Halo announces _zenith._tcp (Zenith is its internal codename).
+// Candidate secondary playback speakers: the same two product service types as
+// handleDiscover, minus the product that is already linked (expanding a
+// product to itself is meaningless). Beoremote Halo (_zenith._tcp) is
+// deliberately not scanned here — it is not a speaker.
+void handleDiscoverSpeakers() {
+    JsonDocument doc;
+    JsonArray arr = doc["devices"].to<JsonArray>();
+    String seenIPs = "|";
+    if (productIP.length() > 0) seenIPs += productIP + "|";   // excludes the linked product
+
+    collectService("_bangolufsen", "fn",   "sn",  0,  0, "mozart", arr, seenIPs);
+    collectService("_beoremote",   "name", "jid", 13, 8, "ase",    arr, seenIPs);
+
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+}
+
 void handleDiscoverHalo() {
     JsonDocument doc;
     JsonArray arr = doc["devices"].to<JsonArray>();

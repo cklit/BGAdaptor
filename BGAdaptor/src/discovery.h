@@ -10,4 +10,5 @@ void collectService(const char* service, const char* nameKey,
                     const char* platformTag, JsonArray& arr, String& seenIPs);
 void handleDiscover();
 void handleDiscoverHalo();
+void handleDiscoverSpeakers();
 void checkProductRecovery();

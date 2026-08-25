@@ -29,13 +29,18 @@ HaloUpdate haloUpdate = NONE;
 bool haloControls;
 bool haloPlayIcon = false;
 bool lineInActive = false;
+bool speakerExpanded = false;
 bool waitingForPlay = false;
 bool mqttConnected = false;
 
 String productIP;
 String productSerial;
+String productName;
 String haloIP;
 String haloSerial;
+String playbackJid;
+String playbackName;
+String playbackSerial;
 String triggerSource;
 String mqttIP;
 String mqttUser;

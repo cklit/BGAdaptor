@@ -17,6 +17,7 @@ void handleHttpResponse(const String& endpoint, const String& response) {
                 lineInActive = true;
                 playbackState = PLAYING;
                 Serial.println("Polled Playing state from product");
+                expandToPlaybackSpeaker();   // idempotent — may also fire from the websocket
             } else {
                 updateHaloPlayback(false);
                 Serial.println("Polled Stopped state from product");
@@ -57,6 +58,15 @@ void sendHttpRequest(const String& endpoint, const String& method, const String&
 }
 
 // Reconnect both Mozart WebSockets only if not already connected
+// Expand/unexpand the Mozart product's Beolink experience to a listener.
+//   POST /api/v1/beolink/expand/{jid}
+//   POST /api/v1/beolink/unexpand/{jid}
+void mozartBeolink(bool expand) {
+    if (playbackJid.length() == 0) return;
+    Serial.println(String(expand ? "Expanding to " : "Unexpanding ") + playbackName);
+    sendHttpRequest(String("/api/v1/beolink/") + (expand ? "expand/" : "unexpand/") + playbackJid, "POST");
+}
+
 void checkWebSocketConnection() {
     if (productIP.length() == 0) return;   // nothing to connect to
     if (millis() - wsLastReconnectAttempt <= wsReconnectDelay) return;
@@ -102,10 +112,14 @@ void processWebSocketMessage(const String& message) {
         if (message.indexOf("\"id\":\"" + triggerSource + "\"") != -1) {
             lineInActive = true;
             Serial.println("✅ Line-in activated");
+            // The product is now on the trigger source, so there is an
+            // experience to expand. Doing this any earlier is a no-op.
+            expandToPlaybackSpeaker();
             haloActionTime = millis();
             if (haloControls) haloUpdate = PAGE;
         } else {
             lineInActive = false;
+            speakerExpanded = false;   // product left the source; any expansion is gone
             Serial.println("❌ Source changed, Line-in deactivated");
             if (playbackState == PLAYING) {
                 playbackState = PAUSED;
