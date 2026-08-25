@@ -45,6 +45,12 @@ static const unsigned long reconnectInterval = 10000;
 // seconds, so repeated failures must slow down or the adaptor spends most of
 // its time stalled (no web UI, no serial handling, no Halo updates).
 static const unsigned long reconnectMaxInterval = 60000;
+
+// Secondary playback speaker: wait a moment after the product reports the
+// trigger source before expanding. The source event arrives as soon as the
+// product switches, which can be before its Beolink experience is ready to
+// accept a listener.
+static const unsigned long expandDelayMs = 250;
 static const unsigned long pingTimeout = 10000;
 static const unsigned long haloActionDelay = 800;
 static const unsigned long stateDebounceDelay = 100;
