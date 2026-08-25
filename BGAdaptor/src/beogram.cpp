@@ -94,9 +94,28 @@ static void setUiState(const char* state, const char* track, int playing) {
     beogramStateDirty = true;
 }
 
+// A manual Stop and a natural end-of-disc both report STOPPED_FB, but only
+// a manual stop is followed by a track-echo burst (the deck confirming the
+// track it's paused on). Defer clearing the track until that window has
+// passed with no echo, which means the disc genuinely finished.
+static bool stoppedPendingClear = false;
+static unsigned long stoppedAt = 0;
+static const unsigned long STOPPED_CLEAR_WINDOW_MS = 800;
+
+void checkStoppedTrackTimeout() {
+    if (stoppedPendingClear && millis() - stoppedAt >= STOPPED_CLEAR_WINDOW_MS) {
+        stoppedPendingClear = false;
+        setUiState(nullptr, "-", -1);
+        if (mqtt.isConnected()) {
+            bgTrack.setValue("-");
+        }
+    }
+}
+
 void processBuffer(BeogramFeedback state) {
     if (state == PLAYING_FB) {
         playbackState = PLAYING;
+        stoppedPendingClear = false;
         setUiState("Playing", nullptr, 1);
         Serial.println("▶️ Beogram reported ON state.");
         if (mqtt.isConnected()) {
@@ -119,9 +138,25 @@ void processBuffer(BeogramFeedback state) {
         }
     } else if (state == STOPPED_FB || state == STANDBY_FB) {
         Serial.println(state == STOPPED_FB ? "Beogram reported OFF state." : "Beogram reported STANDBY state.");
-        setUiState(state == STOPPED_FB ? "Stopped" : "Standby", "-", 0);
+        // Stop is really a pause: keep the last track shown for now. If no
+        // track-echo follows within the window, checkStoppedTrackTimeout()
+        // clears it (that means the disc actually finished). Standby
+        // clears it immediately.
+        setUiState(state == STOPPED_FB ? "Stopped" : "Standby", state == STOPPED_FB ? nullptr : "-", 0);
+        // Secondary playback speaker: release on standby only. Stop is really a pause,
+        // and a lifted tonearm is never reported at all, so standby is the
+        // one unambiguous "finished" event across every deck type.
+        if (state == STANDBY_FB) unexpandPlaybackSpeaker();
+        if (state == STOPPED_FB) {
+            stoppedPendingClear = true;
+            stoppedAt = millis();
+        } else {
+            stoppedPendingClear = false;
+        }
         if (mqtt.isConnected()) {
-            bgTrack.setValue("-");
+            if (state == STANDBY_FB) {
+                bgTrack.setValue("-");
+            }
             bgPlaybackState.setValue(state == STOPPED_FB ? "Stopped" : "Standby");
             bgPlaying.setState(false);
         }
@@ -137,6 +172,7 @@ void processBuffer(BeogramFeedback state) {
         }        
     } else if (state == EJECTED_FB) {
         playbackState = STOPPED;
+        stoppedPendingClear = false;
         Serial.println("⏏️ Beogram tray was ejected");
         setUiState("Ejected", "-", 0);
         if (mqtt.isConnected()) {
@@ -150,31 +186,33 @@ void processBuffer(BeogramFeedback state) {
         if (platform == PLATFORM_MOZART && lineInActive) {
             sendHttpRequest("/api/v1/playback/command/stop", "POST");
         }
-    } else if (state == TRACK14_PLUS && playbackState == PLAYING) {
+    } else if (state == TRACK14_PLUS && (playbackState == PLAYING || stoppedPendingClear)) {
+        stoppedPendingClear = false;
         Serial.print("Track identified: ");
         Serial.println("14+");
         setUiState(nullptr, "14+", -1);
-        if (mqtt.isConnected()) {        
-            bgTrack.setValue("14+");  
+        if (mqtt.isConnected()) {
+            bgTrack.setValue("14+");
         }
         if (haloClient.available()) {
             updateHaloSubtitle("Track 14+");
         }
-    } else if (state != UNKNOWN_STATE && playbackState == PLAYING) {
+    } else if (state != UNKNOWN_STATE && (playbackState == PLAYING || stoppedPendingClear)) {
+        stoppedPendingClear = false;
         Serial.print("Track identified: ");
         Serial.println(state, DEC);
         if (haloClient.available()) {
             char subtitle[20];
             sprintf(subtitle, "Track %d", state);
             updateHaloSubtitle(subtitle);
-        }     
+        }
         char trackNumber[20];
         sprintf(trackNumber, "%d", state);
         setUiState(nullptr, trackNumber, -1);
         if (mqtt.isConnected()) {
             bgTrack.setValue(trackNumber);
         }
-    } 
+    }
 }
 
 void handleSerial1Data() {

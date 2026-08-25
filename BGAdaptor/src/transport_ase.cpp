@@ -6,7 +6,33 @@
 #include <ArduinoJson.h>
 #include <lwip/sockets.h>
 
+// Expand/unexpand the ASE product's primary experience to a listener.
+//   expand:   POST   /BeoZone/Zone/ActiveSources/primaryExperience  {"listener":{"jid":...}}
+//   unexpand: DELETE /BeoZone/Zone/ActiveSources/primaryExperience/?jid=...
+void aseBeolink(bool expand) {
+    if (productIP.length() == 0 || playbackJid.length() == 0) return;
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    String base = "http://" + productIP + ":" + String(SSE_PORT) +
+                  "/BeoZone/Zone/ActiveSources/primaryExperience";
+    HTTPClient localHttp;
+    int code;
+
+    if (expand) {
+        localHttp.begin(base);
+        localHttp.addHeader("Content-Type", "application/json");
+        code = localHttp.POST("{\"listener\":{\"jid\":\"" + playbackJid + "\"}}");
+        Serial.println("Expanding to " + playbackName + " — status: " + String(code));
+    } else {
+        localHttp.begin(base + "/?jid=" + playbackJid);
+        code = localHttp.sendRequest("DELETE");
+        Serial.println("Unexpanding " + playbackName + " — status: " + String(code));
+    }
+    localHttp.end();
+}
+
 void forceSource() {
+    if (productIP.length() == 0) return;   // nothing linked — don't build a bogus URL
     if (WiFi.status() == WL_CONNECTED) {
         String payload = "{\"sourceType\":{\"type\":\"" + triggerSource + "\"}}";
         String url = "http://" + productIP + ":" + String(SSE_PORT) + "/BeoZone/Zone/ActiveSourceType";
@@ -165,6 +191,7 @@ void processSSE(String message) {
         if (data.size() == 0) {
             Serial.println("🛑 Standby mode detected (empty SOURCE data).");
             lineInActive = false;
+            speakerExpanded = false;   // product left the source; any expansion is gone
             playbackState = STOPPED;
             sendHexCommand(STANDBY);
             if (haloClient.available()) {
@@ -183,6 +210,9 @@ void processSSE(String message) {
             if (sourceType == triggerSource && !lineInActive) { //to avoid "re-activating" Line-in on SSE reconnect
                 Serial.println("✅ Line-in activated!");
                 lineInActive = true;
+                // The product is now on the trigger source, so there is an
+                // experience to expand. Doing this any earlier is a no-op.
+                expandToPlaybackSpeaker();
                 haloActionTime = millis();  // Store the current time  
                 if (haloControls) {
                     haloUpdate = PAGE;
@@ -195,6 +225,7 @@ void processSSE(String message) {
             } else if (sourceType != triggerSource) {
                 Serial.println("❌ Line-in deactivated!");
                 lineInActive = false;
+                speakerExpanded = false;   // product left the source; any expansion is gone
                 if (haloClient.available()) {
                     updateHaloPlayback(false, "");  
                 }                             

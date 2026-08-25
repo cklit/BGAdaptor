@@ -93,6 +93,11 @@ void setup() {
     // latency of incoming SSE/websocket/MQTT traffic.
     WiFi.setSleep(false);
 
+    // Cap a single connect() attempt. Without this an unreachable host
+    // blocks the loop for ~3 s per try, stalling the web UI and serial.
+    wifi.setTimeout(2);        // MQTT
+    sseClient.setTimeout(2);   // ASE notification stream
+
     if (!MDNS.begin(DEVICE_NAME)) {
     Serial.println("Error setting up MDNS responder!");
     while (1) {
@@ -128,6 +133,10 @@ void setup() {
 
     productIP = preferences.getString("productIP", "");
     productSerial = preferences.getString("productSerial", "");
+    productName = preferences.getString("productName", "");
+    playbackJid = preferences.getString("playbackJid", "");
+    playbackName = preferences.getString("playbackName", "");
+    playbackSerial = preferences.getString("playbackSerial", "");
     haloIP = preferences.getString("haloIP", "");
     haloSerial = preferences.getString("haloSerial", "");
     haloControls = preferences.getBool("feature_enabled", false);
@@ -140,7 +149,7 @@ void setup() {
     mqttUser = preferences.getString("mqttUser", "");
     mqttPassword = preferences.getString("mqttPassword", "");
     triggerSource = preferences.getString("triggerSource", platform == PLATFORM_MOZART ? "lineIn" : "LINE IN");    
-    preferences.end();  
+
     // ── Home Assistant / MQTT device ────────────────────────────────
     WiFi.macAddress(mac);
     String macSuffix = macToUnderscoreString(mac, sizeof(mac));
@@ -279,6 +288,7 @@ void loop() {
     server.handleClient();
     checkWiFiConnection();
     sendPlayAfterDelay();
+    checkStoppedTrackTimeout();
     secondButtonUpdate();
     activateHaloPage();
     mqtt.loop();

@@ -8,7 +8,7 @@
 #define NUMPIXELS 1
 
 // Version scheme: BGAdaptor.<year>.<month>.<day> of the build/release
-#define FIRMWARE_VERSION "BGAdaptor.2026.8.19_beta12"
+#define FIRMWARE_VERSION "BGAdaptor.2026.8.25"
 
 // ── Platform selection ──────────────────────────────────────────────
 // The adaptor supports two B&O platforms with different transports:
@@ -35,6 +35,10 @@ static const char* const AP_PASSWORD = "password";
 
 // ── Tunables ────────────────────────────────────────────────────────
 static const unsigned long reconnectInterval = 10000;
+// Reconnect backoff. A connect() to an unreachable host blocks the loop for
+// seconds, so repeated failures must slow down or the adaptor spends most of
+// its time stalled (no web UI, no serial handling, no Halo updates).
+static const unsigned long reconnectMaxInterval = 60000;
 static const unsigned long pingTimeout = 10000;
 static const unsigned long haloActionDelay = 800;
 static const unsigned long stateDebounceDelay = 100;

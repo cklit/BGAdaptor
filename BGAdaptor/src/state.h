@@ -23,6 +23,8 @@ extern unsigned long sseLastReconnectAttempt;
 extern unsigned long sseReconnectDelay;      // ASE: exponential backoff, start at 1s
 extern unsigned long sseLastDataReceived;    // ASE: last byte seen on the SSE stream
 extern unsigned long wsLastReconnectAttempt;    // Mozart
+extern unsigned long wsReconnectDelay;          // Mozart: grows while the product is unreachable
+extern unsigned long mqttReconnectDelay;        // grows while the broker is unreachable
 extern unsigned long haloLastReconnectAttempt;
 extern unsigned long mqttLastReconnectAttempt;
 extern unsigned long wsLastPingReceived;        // Mozart
@@ -44,14 +46,19 @@ extern HaloUpdate haloUpdate;
 extern bool haloControls;
 extern bool haloPlayIcon;      // turntable only: show a turntable icon on the Halo Play button
 extern bool lineInActive;
+extern bool speakerExpanded;   // true while the secondary speaker is expanded in
 extern bool waitingForPlay;
 extern bool mqttConnected;
 
 // Config values (persisted in Preferences)
 extern String productIP;       // unified — replaces sseIP (ASE) / wsIP (Mozart)
 extern String productSerial;     // serial number from discovery TXT records; empty for manual IP entry
+extern String productName;       // friendly name from discovery; empty for manual IP entry
 extern String haloIP;
 extern String haloSerial;      // serial from discovery TXT "serial"; empty for manual IP entry
+extern String playbackJid;     // Beolink JID of the secondary playback speaker ("" = off)
+extern String playbackName;    // its friendly name, for the UI
+extern String playbackSerial;  // its serial number, shown alongside the name
 extern String triggerSource;   // ASE: "LINE IN"/"TOSLINK" — Mozart: "lineIn"/"spdif"
 extern String mqttIP;
 extern String mqttUser;
