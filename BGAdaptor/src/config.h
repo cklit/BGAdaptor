@@ -9,12 +9,18 @@
 
 // Version scheme: BGAdaptor.<year>.<month>.<day> of the build/release
 <<<<<<< HEAD
+<<<<<<< HEAD
 #define FIRMWARE_VERSION "BGAdaptor.2026.8.20"
 ||||||| parent of 9ffbfe0 (New function: Auto-expand)
 #define FIRMWARE_VERSION "BGAdaptor.2026.8.19_beta12"
 =======
 #define FIRMWARE_VERSION "BGAdaptor.2026.8.25"
 >>>>>>> 9ffbfe0 (New function: Auto-expand)
+||||||| parent of 72eed90 (Help section corrected)
+#define FIRMWARE_VERSION "BGAdaptor.2026.8.25"
+=======
+#define FIRMWARE_VERSION "BGAdaptor.2026.9.3"
+>>>>>>> 72eed90 (Help section corrected)
 
 // ── Platform selection ──────────────────────────────────────────────
 // The adaptor supports two B&O platforms with different transports:

@@ -567,7 +567,7 @@ a:hover{text-decoration:underline}
 <div class="page">
   <div class="page-title">
     <svg class="ic"><use href="#i-device-speaker"/></svg>
-    <h1>Secondary playback speaker</h1>
+    <h1>Secondary playback speaker (optional)</h1>
   </div>
 
   <div class="card">
@@ -593,18 +593,17 @@ a:hover{text-decoration:underline}
 
   <div class="card">
     <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>About this setting</h2></div>
-    <p>Some products are sources only and have no speakers of their own &mdash; for example Beosound Core and Beoconnect Core. Selecting a secondary playback speaker lets the adaptor expand the Beolink experience to a speaker automatically, so the Beogram is audible without starting the expansion by hand each time.</p>
+    <p>Some products are sources only and have no speakers of their own &mdash; for example Beosound Core and Beoconnect Core. Selecting a secondary playback speaker lets the adaptor expand the Beolink experience to a speaker automatically, so the Beogram is audible without starting the expansion by hand each time. </p><p><b>To disable this feature, select "None" from the dropdown and press Save.</b></p>
     <h3>What it does</h3>
     <ul>
-      <li>When the deck starts playing, the selected speaker joins the product's Beolink experience.</li>
+      <li>When the deck starts playing, the music will be expanded to the secondary playback speaker.</li>
       <li>When the deck is set to standby, the speaker leaves again.</li>
-      <li>Works with any product, not only source-only ones.</li>
     </ul>
     <h3>What it does not do</h3>
     <ul>
-      <li><strong>Only one speaker.</strong> To play on several, expand from the Bang &amp; Olufsen app or Home Assistant instead.</li>
-      <li><strong>No control from the selected speaker.</strong> Its buttons, remote and app control the speaker, not the deck. Use Beoremote Halo, the <a href="/">BGAdaptor front page</a>, or Home Assistant to control playback.</li>
-      <li><strong>It interrupts.</strong> If the speaker is playing something else, it joins the Beogram experience anyway.</li>
+      <li><strong>Only one speaker.</strong> To play on more speakers, expand from the Bang &amp; Olufsen app or Home Assistant instead.</li>
+      <li><strong>No control from the secondary playback speaker.</strong> Use Beoremote Halo, the <a href="/">BGAdaptor front page</a>, or Home Assistant to control playback.</li>
+      <li><strong>It takes over any ongoing experiences.</strong> If the secondary playback speaker is playing something else, it will be interrupted by the BGAdaptor regardless, once the deck starts.</li>
     </ul>
   </div>
 
