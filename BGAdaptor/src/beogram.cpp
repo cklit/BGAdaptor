@@ -138,21 +138,6 @@ void processBuffer(BeogramFeedback state) {
         }
     } else if (state == STOPPED_FB || state == STANDBY_FB) {
         Serial.println(state == STOPPED_FB ? "Beogram reported OFF state." : "Beogram reported STANDBY state.");
-<<<<<<< HEAD
-        // Stop is really a pause: keep the last track shown for now. If no
-        // track-echo follows within the window, checkStoppedTrackTimeout()
-        // clears it (that means the disc actually finished). Standby
-        // clears it immediately.
-        setUiState(state == STOPPED_FB ? "Stopped" : "Standby", state == STOPPED_FB ? nullptr : "-", 0);
-        if (state == STOPPED_FB) {
-            stoppedPendingClear = true;
-            stoppedAt = millis();
-        } else {
-            stoppedPendingClear = false;
-        }
-||||||| parent of 9ffbfe0 (New function: Auto-expand)
-        setUiState(state == STOPPED_FB ? "Stopped" : "Standby", "-", 0);
-=======
         // Stop is really a pause: keep the last track shown for now. If no
         // track-echo follows within the window, checkStoppedTrackTimeout()
         // clears it (that means the disc actually finished). Standby
@@ -168,7 +153,6 @@ void processBuffer(BeogramFeedback state) {
         } else {
             stoppedPendingClear = false;
         }
->>>>>>> 9ffbfe0 (New function: Auto-expand)
         if (mqtt.isConnected()) {
             if (state == STANDBY_FB) {
                 bgTrack.setValue("-");
