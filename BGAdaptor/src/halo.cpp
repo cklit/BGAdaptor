@@ -98,6 +98,7 @@ void sendConfigToHalo() {
     if (deviceType == DEVICE_RECORD) buttons += haloButton(HALO_BTN_STOP, "Lift") + ",";
     if (deviceType == DEVICE_TAPE)   buttons += haloButton(HALO_BTN_STOP, "Stop") + ",";
     buttons += haloButton(HALO_BTN_NEXT, nextLabel);
+    if (deviceType == DEVICE_RECORD) buttons += "," + haloButton(HALO_BTN_STANDBY, "Stby");
 
     String jsonMessage = String("{") +
         "\"configuration\": {" +
@@ -136,7 +137,7 @@ void updateHaloPlayback(bool playing, const char* subtitle) {
         // Icon mode: the button shows a turntable, so the label moves to
         // the title and the state is reported in the subtitle instead.
         sendButtonIconUpdate(HALO_BTN_PLAY, "turntable", "PLAY", title);
-        sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "Lift", subtitle);
+        sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "Lift", nullptr);
         return;
     }
     if (deviceType != DEVICE_CD) {
@@ -144,7 +145,8 @@ void updateHaloPlayback(bool playing, const char* subtitle) {
         // keeps an empty one so the state is stated once, not twice.
         sendButtonUpdate(HALO_BTN_PLAY, nullptr, title, "Play", subtitle);
         sendButtonUpdate(HALO_BTN_STOP, nullptr, "",
-                         (deviceType == DEVICE_TAPE) ? "Stop" : "Lift", subtitle);
+                 (deviceType == DEVICE_TAPE) ? "Stop" : "Lift",
+                 deviceType == DEVICE_TAPE ? subtitle : nullptr);
     } else {
         sendButtonUpdate(HALO_BTN_PLAY, nullptr, title, playing ? "Stop" : "Play", subtitle);
     }
@@ -156,7 +158,7 @@ void updateHaloSubtitle(const char* subtitle) {
     if (!(deviceType == DEVICE_RECORD && haloPlayIcon)) {
         sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, subtitle);
     }
-    if (deviceType != DEVICE_CD) {
+    if (deviceType == DEVICE_TAPE) {
         sendButtonUpdate(HALO_BTN_STOP, nullptr, nullptr, nullptr, subtitle);
     }
 }
@@ -229,7 +231,7 @@ void onMessageCallback(WebsocketsMessage message) {
         } else if (buttonID == HALO_BTN_NEXT) {
             Serial.println("NEXT");
             sendHexCommand(NEXT);
-        } else if (buttonID == HALO_BTN_STANDBY) {
+        } else if (buttonID == HALO_BTN_STANDBY && deviceType == DEVICE_RECORD) {
             Serial.println("STBY");
             sendHexCommand(STANDBY);
         } else {
