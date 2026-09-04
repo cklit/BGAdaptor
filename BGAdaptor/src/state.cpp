@@ -28,6 +28,7 @@ HaloUpdate haloUpdate = NONE;
 
 bool haloControls;
 bool haloPlayIcon = false;
+bool haloVolumeControls = true;
 bool lineInActive = false;
 bool speakerExpanded = false;
 unsigned long expandDueAt = 0;

@@ -503,6 +503,19 @@ void handleUpdateHaloPlayIcon() {
     server.send(400, "text/plain", "Missing value");
 }
 
+void handleUpdateHaloVolumeControls() {
+    if (server.hasArg("enabled")) {
+        haloVolumeControls = (server.arg("enabled") == "true");
+        preferences.putBool("haloVolumeControls", haloVolumeControls);
+        if (!haloVolumeControls && haloClient.available()) {
+            sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
+        }
+        server.send(200, "text/plain", "OK");
+        return;
+    }
+    server.send(400, "text/plain", "Missing value");
+}
+
 
 // Secondary playback speaker sub-page: pick one speaker that joins the product's
 // Beolink experience when the deck starts playing. Reached from the product
@@ -710,6 +723,7 @@ void handleStatus() {
     jsonResponse += "\"device_type\":\"" + String(deviceType == DEVICE_RECORD ? "record" : deviceType == DEVICE_TAPE ? "tape" : "cd") + "\",";
     jsonResponse += "\"feature_enabled\": " + String(haloControls ? "true" : "false") + ",";
     jsonResponse += "\"halo_play_icon\": " + String(haloPlayIcon ? "true" : "false") + ",";    
+    jsonResponse += "\"halo_volume_controls\": " + String(haloVolumeControls ? "true" : "false") + ",";
     jsonResponse += "\"mqtt_connected\":" + String(mqttConnected ? "true" : "false")+ ",";
     jsonResponse += "\"trigger_source\":\"" + triggerSource + "\"";            
     jsonResponse += "}";
@@ -862,6 +876,7 @@ void registerWebRoutes() {
     server.on("/update-feature", HTTP_GET, handleUpdateFeature);
     server.on("/update-devicetype", HTTP_GET, handleUpdateDeviceType);
     server.on("/update-haloplayicon", HTTP_GET, handleUpdateHaloPlayIcon);
+    server.on("/update-halovolume", HTTP_GET, handleUpdateHaloVolumeControls);
     server.on("/status", handleStatus);
     server.on("/update-ota", HTTP_POST, handleOTAResult, handleOTAUpdate); 
     server.begin();

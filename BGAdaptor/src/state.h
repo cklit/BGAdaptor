@@ -45,6 +45,7 @@ extern HaloUpdate haloUpdate;
 // Flags
 extern bool haloControls;
 extern bool haloPlayIcon;      // turntable only: show a turntable icon on the Halo Play button
+extern bool haloVolumeControls;
 extern bool lineInActive;
 extern bool speakerExpanded;   // true while the secondary speaker is expanded in
 extern unsigned long expandDueAt;  // 0 = nothing pending, else millis() when the expand fires

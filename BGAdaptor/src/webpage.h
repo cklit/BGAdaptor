@@ -274,6 +274,13 @@ static const char* htmlPage PROGMEM = R"rawliteral(
           <span class="toggle-slider"></span>
         </label>
       </div>
+      <div class="toggle-row">
+        <span>Volume controls on Play button</span>
+        <label class="toggle">
+          <input type="checkbox" id="haloVolumeControlsToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
     <div class="action-row" id="halo-action-row" style="display:none">
       <button class="btn btn-danger" id="halo-unlink-btn">Unlink Halo</button>
@@ -421,6 +428,7 @@ function updateStatus(){
     document.getElementById('fw-version').textContent=d.firmware;
     document.getElementById('featureToggle').checked=d.feature_enabled;
     document.getElementById('haloPlayIconToggle').checked=d.halo_play_icon;
+    document.getElementById('haloVolumeControlsToggle').checked=d.halo_volume_controls;
     // Only meaningful for a turntable with a Halo linked.
     document.getElementById('halo-playicon-row').style.display=
       (d.device_type==='record'&&d.halo_ip&&d.halo_ip!=='')?'flex':'none';
@@ -673,6 +681,10 @@ document.getElementById('featureToggle').addEventListener('change',function(){
 
 document.getElementById('haloPlayIconToggle').addEventListener('change',function(){
   fetch('/update-haloplayicon?enabled='+this.checked);
+});
+
+document.getElementById('haloVolumeControlsToggle').addEventListener('change',function(){
+  fetch('/update-halovolume?enabled='+this.checked);
 });
 
 document.getElementById('factory-reset-btn').addEventListener('click',function(){

@@ -20,6 +20,7 @@ void handleMqttConfig();
 void handleUpdateFeature();
 void handleUpdateDeviceType();
 void handleUpdateHaloPlayIcon();
+void handleUpdateHaloVolumeControls();
 void handlePlaybackSpeaker();
 void handleUpdatePlaybackSpeaker();
 void handleStatus();

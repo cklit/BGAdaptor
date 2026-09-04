@@ -191,7 +191,7 @@ void onMessageCallback(WebsocketsMessage message) {
     }
 
     JsonObject event = doc["event"];
-    if (haloControls && event["type"] == "wheel" &&
+    if (haloControls && haloVolumeControls && event["type"] == "wheel" &&
         event["id"] == HALO_BTN_PLAY && event["counts"].is<int>()) {
         int counts = event["counts"].as<int>();
         if (counts == 1 || counts == -1) {
