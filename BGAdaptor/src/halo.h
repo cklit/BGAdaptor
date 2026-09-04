@@ -32,3 +32,5 @@ void activateHaloPage();
 // toggle button and the record player's separate Play/Stop pair.
 void updateHaloPlayback(bool playing, const char* subtitle = nullptr);
 void updateHaloSubtitle(const char* subtitle);
+void updateHaloVolume(int level, int minimum, int maximum);
+void resetHaloVolumeWhenProductDisconnected();

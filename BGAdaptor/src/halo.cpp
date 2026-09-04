@@ -161,6 +161,24 @@ void updateHaloSubtitle(const char* subtitle) {
     }
 }
 
+void updateHaloVolume(int level, int minimum, int maximum) {
+    if (!haloClient.available() || maximum <= minimum) return;
+    int percent = ((level - minimum) * 100 + (maximum - minimum) / 2) / (maximum - minimum);
+    percent = constrain(percent, 0, 100);
+    sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, percent);
+}
+
+void resetHaloVolumeWhenProductDisconnected() {
+    static bool resetSent = false;
+    if (productConnected()) {
+        resetSent = false;
+        return;
+    }
+    if (!haloClient.available() || resetSent) return;
+    sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
+    resetSent = true;
+}
+
 void onMessageCallback(WebsocketsMessage message) {
     //Serial.println("Message from Halo: " + message.data());
 
@@ -169,6 +187,21 @@ void onMessageCallback(WebsocketsMessage message) {
 
     if (error) {
         Serial.println("JSON parsing failed");
+        return;
+    }
+
+    JsonObject event = doc["event"];
+    if (haloControls && event["type"] == "wheel" &&
+        event["id"] == HALO_BTN_PLAY && event["counts"].is<int>()) {
+        int counts = event["counts"].as<int>();
+        if (counts == 1 || counts == -1) {
+            Serial.println(counts > 0 ? "Halo volume up" : "Halo volume down");
+            if (platform == PLATFORM_ASE) {
+                aseAdjustVolume(counts);
+            } else {
+                mozartAdjustVolume(counts);
+            }
+        }
         return;
     }
 
@@ -204,7 +237,7 @@ void onMessageCallback(WebsocketsMessage message) {
         }
 
         if (haloClient.available()) {
-            sendButtonUpdate(pendingUpdate.id.c_str(), "inactive", nullptr, nullptr, nullptr, 0);
+            sendButtonUpdate(pendingUpdate.id.c_str(), "inactive");
         }
         
         // Schedule second update (active state) after 500ms
@@ -221,7 +254,7 @@ void onMessageCallback(WebsocketsMessage message) {
 
 void secondButtonUpdate() {
     if (haloClient.available() && pendingUpdate.pending && millis() - pendingUpdate.timestamp >= haloActionDelay) {
-        sendButtonUpdate(pendingUpdate.id.c_str(), "inactive", nullptr, nullptr, nullptr,  100);
+        sendButtonUpdate(pendingUpdate.id.c_str(), "inactive");
         pendingUpdate.pending = false;  // Reset update tracker
     }
 }

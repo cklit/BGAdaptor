@@ -281,6 +281,7 @@ void loop() {
     }
 
     connectToHalo();
+    resetHaloVolumeWhenProductDisconnected();
     checkPingWebsocket();
     checkProductRecovery();
     checkPendingExpand();

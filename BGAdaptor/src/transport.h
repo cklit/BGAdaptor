@@ -12,6 +12,7 @@ inline bool productConnected() {
 // ASE (transport_ase.cpp): SSE stream + BeoZone REST
 void forceSource();
 void aseBeolink(bool expand);
+void aseAdjustVolume(int delta);
 void connectToSSE();
 void checkSSEConnection();
 void processSSE(String message);
@@ -19,7 +20,8 @@ void readSSE();
 
 // Mozart (transport_moz.cpp): dual websockets + /api/v1 REST
 void handleHttpResponse(const String& endpoint, const String& response);
-void sendHttpRequest(const String& endpoint, const String& method = "GET", const String& payload = "");
+bool sendHttpRequest(const String& endpoint, const String& method = "GET", const String& payload = "");
+void mozartAdjustVolume(int delta);
 void mozartBeolink(bool expand);
 void checkWebSocketConnection();
 void processWebSocketMessage(const String& message);

@@ -6,6 +6,10 @@
 #include <ArduinoJson.h>
 #include <lwip/sockets.h>
 
+static int aseVolumeLevel = -1;
+static int aseVolumeMinimum = 0;
+static int aseVolumeMaximum = 90;
+
 // Expand/unexpand the ASE product's primary experience to a listener.
 //   expand:   POST   /BeoZone/Zone/ActiveSources/primaryExperience  {"listener":{"jid":...}}
 //   unexpand: DELETE /BeoZone/Zone/ActiveSources/primaryExperience/?jid=...
@@ -44,6 +48,27 @@ void forceSource() {
         Serial.println("Status: " + String(code));
         httpForce.end();
     }
+}
+
+void aseAdjustVolume(int delta) {
+    if ((delta != 1 && delta != -1) || productIP.length() == 0 ||
+        aseVolumeLevel < 0 || WiFi.status() != WL_CONNECTED) return;
+
+    int level = constrain(aseVolumeLevel + delta, 0, aseVolumeMaximum);
+    if (level == aseVolumeLevel) return;
+
+    String url = "http://" + productIP + ":" + String(SSE_PORT) +
+                 "/BeoZone/Zone/Sound/Volume/Speaker/Level";
+    HTTPClient volumeHttp;
+    volumeHttp.begin(url);
+    volumeHttp.addHeader("Content-Type", "application/json");
+    int code = volumeHttp.sendRequest("PUT", "{\"level\":" + String(level) + "}");
+    if (code >= 200 && code < 300) {
+        aseVolumeLevel = level;
+        updateHaloVolume(aseVolumeLevel, aseVolumeMinimum, aseVolumeMaximum);
+    }
+    Serial.println("ASE volume: " + String(level) + " — status: " + String(code));
+    volumeHttp.end();
 }
 
 // The SSE stream is receive-only, so if the product reboots or drops off
@@ -138,6 +163,21 @@ void processSSE(String message) {
     String type = notification["type"].as<String>();
     JsonObject data = notification["data"];
     if (data.isNull()) return;
+
+    if (type == "VOLUME") {
+        JsonObject speaker = data["speaker"];
+        if (!speaker.isNull() && speaker["level"].is<int>()) {
+            aseVolumeLevel = speaker["level"].as<int>();
+            if (speaker["range"]["minimum"].is<int>()) {
+                aseVolumeMinimum = speaker["range"]["minimum"].as<int>();
+            }
+            if (speaker["range"]["maximum"].is<int>()) {
+                aseVolumeMaximum = speaker["range"]["maximum"].as<int>();
+            }
+            updateHaloVolume(aseVolumeLevel, aseVolumeMinimum, aseVolumeMaximum);
+        }
+        return;
+    }
 
     // Handle CONTROL commands
     if (type == "COMMAND") {

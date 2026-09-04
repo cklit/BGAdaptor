@@ -5,6 +5,9 @@
 #include <WiFi.h>
 #include <ArduinoJson.h>
 
+static int mozartVolumeLevel = -1;
+static int mozartVolumeMaximum = 100;
+
 void handleHttpResponse(const String& endpoint, const String& response) {
     if (endpoint == "/api/v1/playback/state") {
         JsonDocument doc;
@@ -28,32 +31,51 @@ void handleHttpResponse(const String& endpoint, const String& response) {
     }
 }
 
-void sendHttpRequest(const String& endpoint, const String& method, const String& payload) {
-    if (productIP.length() == 0) return;
+bool sendHttpRequest(const String& endpoint, const String& method, const String& payload) {
+    if (productIP.length() == 0) return false;
     if (WiFi.status() == WL_CONNECTED) {
         String url = "http://" + productIP + endpoint;
         Serial.println("Sending " + method + " request to: " + url);
 
         HTTPClient localHttp;  // Use local instance instead of global
         if (localHttp.begin(url)) {
-            if (method == "POST") localHttp.addHeader("Content-Type", "application/json");
+            if (method == "POST" || method == "PUT") localHttp.addHeader("Content-Type", "application/json");
             int httpResponseCode;
             if (method == "POST") {
                 httpResponseCode = payload.isEmpty() ? localHttp.POST("") : localHttp.POST(payload);
+            } else if (method == "PUT") {
+                httpResponseCode = localHttp.sendRequest("PUT", payload);
             } else {
                 httpResponseCode = localHttp.GET();
             }
             Serial.println("HTTP Response code: " + String(httpResponseCode));
-            if (httpResponseCode == HTTP_CODE_OK) {
+            if (httpResponseCode >= 200 && httpResponseCode < 300) {
                 String response = localHttp.getString();
                 handleHttpResponse(endpoint, response);
             }
             localHttp.end();
+            return httpResponseCode >= 200 && httpResponseCode < 300;
         } else {
             Serial.println("HTTP begin failed");
         }
     } else {
         Serial.println("WiFi not connected, cannot send request.");
+    }
+    return false;
+}
+
+void mozartAdjustVolume(int delta) {
+    if ((delta != 1 && delta != -1) || productIP.length() == 0 ||
+        mozartVolumeLevel < 0 || WiFi.status() != WL_CONNECTED) return;
+
+    int level = constrain(mozartVolumeLevel + delta, 0, mozartVolumeMaximum);
+    if (level == mozartVolumeLevel) return;
+
+    bool success = sendHttpRequest("/api/v1/sound/volume/level", "PUT",
+                                   "{\"level\":" + String(level) + "}");
+    if (success) {
+        mozartVolumeLevel = level;
+        updateHaloVolume(mozartVolumeLevel, 0, mozartVolumeMaximum);
     }
 }
 
@@ -107,6 +129,21 @@ void checkWebSocketConnection() {
 
 void processWebSocketMessage(const String& message) {
     unsigned long currentTime = millis();
+
+    JsonDocument volumeDoc;
+    if (!deserializeJson(volumeDoc, message) &&
+        volumeDoc["eventType"] == "WebSocketEventVolume") {
+        JsonObject level = volumeDoc["eventData"]["level"];
+        JsonObject maximum = volumeDoc["eventData"]["maximum"];
+        if (level["level"].is<int>()) {
+            mozartVolumeLevel = level["level"].as<int>();
+            if (maximum["level"].is<int>()) {
+                mozartVolumeMaximum = maximum["level"].as<int>();
+            }
+            updateHaloVolume(mozartVolumeLevel, 0, mozartVolumeMaximum);
+        }
+        return;
+    }
 
     if (message.indexOf("\"eventType\":\"WebSocketEventSourceChange\"") != -1) {
         if (message.indexOf("\"id\":\"" + triggerSource + "\"") != -1) {
