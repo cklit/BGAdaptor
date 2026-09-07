@@ -11,8 +11,10 @@ const char* const HALO_BTN_NEXT    = "03481fcc-e2cc-47ba-bcae-6152bbf93692";
 const char* const HALO_BTN_STANDBY = "03481fcc-e2cc-47ba-bcae-6152bbf93482";
 
 ButtonUpdate pendingUpdate = {"", false, 0}; // Track pending button updates
+static bool haloAwake = true;
 
 void sendButtonUpdate(const char* buttonID, const char* state, const char* title, const char* text, const char* subtitle, int value) {
+    if (!haloAwake) return;
     JsonDocument doc;
     doc["update"]["type"] = "button";
     doc["update"]["id"] = buttonID;
@@ -30,6 +32,7 @@ void sendButtonUpdate(const char* buttonID, const char* state, const char* title
 // built-in icons. content is oneOf {text} | {icon}, so the two are
 // mutually exclusive — never send both.
 void sendButtonIconUpdate(const char* buttonID, const char* icon, const char* title, const char* subtitle) {
+    if (!haloAwake) return;
     JsonDocument doc;
     doc["update"]["type"] = "button";
     doc["update"]["id"] = buttonID;
@@ -42,6 +45,7 @@ void sendButtonIconUpdate(const char* buttonID, const char* icon, const char* ti
 }
 
 void sendPageUpdate(const char* pageID, const char* buttonID) {
+    if (!haloAwake) return;
     JsonDocument doc;
     doc["update"]["type"] = "displaypage";
     doc["update"]["pageid"] = pageID; 
@@ -82,8 +86,10 @@ void sendConfigToHalo() {
     const char* pageTitle = (deviceType == DEVICE_TAPE)   ? "Beocord"
                           : (deviceType == DEVICE_RECORD) ? "Beogram"
                                                           : "Beogram CD";    
-    const char* prevLabel = (deviceType == DEVICE_TAPE) ? "Rew" : "Prev";
-    const char* nextLabel = (deviceType == DEVICE_TAPE) ? "Fwd" : "Next";
+    const char* prevLabel = (deviceType == DEVICE_RECORD) ? "<"
+                          : (deviceType == DEVICE_TAPE) ? "<<" : "I<";
+    const char* nextLabel = (deviceType == DEVICE_RECORD) ? ">"
+                          : (deviceType == DEVICE_TAPE) ? ">>" : ">I";
 
     // Turntable only: the Play button can show Halo's turntable icon, with
     // the action in the title and the playback state in the subtitle.
@@ -95,7 +101,7 @@ void sendConfigToHalo() {
     // CD trusts its own reported state, so one toggling button is enough.
     // A turntable never reports a lifted tonearm and a tape deck's stop is
     // a distinct action — both get a dedicated second button.
-    if (deviceType == DEVICE_RECORD) buttons += haloButton(HALO_BTN_STOP, "Lift") + ",";
+    if (deviceType == DEVICE_RECORD) buttons += haloButton(HALO_BTN_STOP, "II") + ",";
     if (deviceType == DEVICE_TAPE)   buttons += haloButton(HALO_BTN_STOP, "Stop") + ",";
     buttons += haloButton(HALO_BTN_NEXT, nextLabel);
     if (deviceType == DEVICE_RECORD) buttons += "," + haloButton(HALO_BTN_STANDBY, "Stby");
@@ -137,7 +143,7 @@ void updateHaloPlayback(bool playing, const char* subtitle) {
         // Icon mode: the button shows a turntable, so the label moves to
         // the title and the state is reported in the subtitle instead.
         sendButtonIconUpdate(HALO_BTN_PLAY, "turntable", "PLAY", title);
-        sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "Lift", nullptr);
+        sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "II", nullptr);
         return;
     }
     if (deviceType != DEVICE_CD) {
@@ -145,7 +151,7 @@ void updateHaloPlayback(bool playing, const char* subtitle) {
         // keeps an empty one so the state is stated once, not twice.
         sendButtonUpdate(HALO_BTN_PLAY, nullptr, title, "Play", subtitle);
         sendButtonUpdate(HALO_BTN_STOP, nullptr, "",
-                 (deviceType == DEVICE_TAPE) ? "Stop" : "Lift",
+                         (deviceType == DEVICE_TAPE) ? "Stop" : "II",
                  deviceType == DEVICE_TAPE ? subtitle : nullptr);
     } else {
         sendButtonUpdate(HALO_BTN_PLAY, nullptr, title, playing ? "Stop" : "Play", subtitle);
@@ -253,9 +259,18 @@ void onMessageCallback(WebsocketsMessage message) {
         pendingUpdate.timestamp = millis();
     }
 
-    if (haloControls && lineInActive && doc["event"].is<JsonObject>() && doc["event"]["type"] == "system" && doc["event"]["state"] == "active") {
-        haloActionTime = millis();  // Store the current time
-        haloUpdate = PAGE;
+    if (doc["event"].is<JsonObject>() && doc["event"]["type"] == "system") {
+        String systemState = doc["event"]["state"].as<String>();
+        if (systemState == "active") {
+            haloAwake = true;
+            if (haloControls && lineInActive) {
+                haloActionTime = millis();  // Store the current time
+                haloUpdate = PAGE;
+            }
+        } else if (systemState == "standby" || systemState == "sleep") {
+            haloAwake = false;
+            haloUpdate = NONE;
+        }
     }
 }    
 
@@ -289,6 +304,11 @@ void activateHaloPage() {
     if (haloClient.available() && haloUpdate == PAGE && (millis() - haloActionTime >= haloActionDelay)) {
         haloUpdate = NONE;  
         sendPageUpdate(HALO_PAGE_ID, HALO_BTN_PLAY);
+        updateHaloPlayback(beogramPlaying);
+        if (deviceType == DEVICE_CD && beogramTrack != "-") {
+            String subtitle = "Track " + beogramTrack;
+            updateHaloSubtitle(subtitle.c_str());
+        }
     }
 
     if (haloClient.available() && haloUpdate == STATE && (millis() - haloActionTime >= haloActionDelay)) {
