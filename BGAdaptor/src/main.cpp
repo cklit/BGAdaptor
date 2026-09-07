@@ -141,7 +141,7 @@ void setup() {
     haloSerial = preferences.getString("haloSerial", "");
     haloControls = preferences.getBool("feature_enabled", false);
     haloPlayIcon = preferences.getBool("haloPlayIcon", false);
-    haloVolumeControls = preferences.getBool("haloVolumeControls", true);
+    haloVolumeControls = preferences.getBool("haloVolCtrl", true);
     String storedDeck = preferences.getString("deviceType", "cd");
     deviceType = (storedDeck == "record") ? DEVICE_RECORD
                : (storedDeck == "tape")   ? DEVICE_TAPE

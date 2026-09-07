@@ -8,7 +8,7 @@
 #define NUMPIXELS 1
 
 // Version scheme: BGAdaptor.<year>.<month>.<day> of the build/release
-#define FIRMWARE_VERSION "BGAdaptor.2026.9.4"
+#define FIRMWARE_VERSION "BGAdaptor.2026.9.7"
 
 // ── Platform selection ──────────────────────────────────────────────
 // The adaptor supports two B&O platforms with different transports:
@@ -46,7 +46,7 @@ static const unsigned long reconnectMaxInterval = 60000;
 // accept a listener.
 static const unsigned long expandDelayMs = 250;
 static const unsigned long pingTimeout = 10000;
-static const unsigned long haloActionDelay = 800;
+static const unsigned long haloActionDelay = 1200;
 static const unsigned long stateDebounceDelay = 100;
 static const unsigned long SSE_IDLE_TIMEOUT_MS = 300000;  // ASE: reconnect if stream silent for 5 min
 #define MDNS_SCAN_TIME_MS 5000   // mDNS discovery: per service type

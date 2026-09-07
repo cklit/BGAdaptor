@@ -105,7 +105,17 @@ static const unsigned long STOPPED_CLEAR_WINDOW_MS = 800;
 void checkStoppedTrackTimeout() {
     if (stoppedPendingClear && millis() - stoppedAt >= STOPPED_CLEAR_WINDOW_MS) {
         stoppedPendingClear = false;
-        setUiState(nullptr, "-", -1);
+        if (deviceType == DEVICE_CD) {
+            // A CD that stops without sending a track echo has finished the
+            // disc and entered standby, even though it reports STOPPED only.
+            setUiState("Standby", "-", 0);
+            unexpandPlaybackSpeaker();
+            if (mqtt.isConnected()) {
+                bgPlaybackState.setValue("Standby");
+            }
+        } else {
+            setUiState(nullptr, "-", -1);
+        }
         if (mqtt.isConnected()) {
             bgTrack.setValue("-");
         }

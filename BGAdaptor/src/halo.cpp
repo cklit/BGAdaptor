@@ -164,7 +164,12 @@ void updateHaloSubtitle(const char* subtitle) {
 }
 
 void updateHaloVolume(int level, int minimum, int maximum) {
-    if (!haloClient.available() || maximum <= minimum) return;
+    if (!haloClient.available()) return;
+    if (!haloVolumeControls) {
+        sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
+        return;
+    }
+    if (maximum <= minimum) return;
     int percent = ((level - minimum) * 100 + (maximum - minimum) / 2) / (maximum - minimum);
     percent = constrain(percent, 0, 100);
     sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, percent);

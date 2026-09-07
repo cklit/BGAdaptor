@@ -304,10 +304,16 @@ static const char* htmlPage PROGMEM = R"rawliteral(
       <span>Current version</span>
       <span class="fw-val" id="fw-version">Loading...</span>
     </div>
-    <form method="POST" action="/update-ota" enctype="multipart/form-data">
+    <form id="ota-form" method="POST" action="/update-ota" enctype="multipart/form-data">
       <div class="file-row">
         <input type="file" name="update" accept=".bin">
         <button type="submit" class="btn">Upload</button>
+      </div>
+      <div id="ota-progress" style="display:none;margin-top:10px">
+        <div style="height:8px;background:#ddd;border-radius:4px;overflow:hidden">
+          <div id="ota-progress-bar" style="width:0;height:100%;background:#1D9E75;transition:width .15s"></div>
+        </div>
+        <span id="ota-progress-text" class="info-text" style="display:block;margin-top:6px">Uploading: 0%</span>
       </div>
     </form>
   </div>
@@ -346,6 +352,39 @@ let currentPlatform='';
 function setIcon(id,name){
   document.getElementById(id).innerHTML='<use href="#i-'+name+'"/>';
 }
+
+document.getElementById('ota-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  let form=this,file=form.querySelector('input[type=file]').files[0];
+  if(!file)return;
+  let progress=document.getElementById('ota-progress');
+  let bar=document.getElementById('ota-progress-bar');
+  let text=document.getElementById('ota-progress-text');
+  let button=form.querySelector('button[type=submit]');
+  let request=new XMLHttpRequest();
+  progress.style.display='block';
+  button.disabled=true;
+  request.upload.onprogress=function(event){
+    if(!event.lengthComputable)return;
+    let percent=Math.round(event.loaded/event.total*100);
+    bar.style.width=percent+'%';
+    text.textContent='Uploading: '+percent+'%';
+  };
+  request.onload=function(){
+    if(request.status>=200&&request.status<400){
+      text.textContent='Upload complete. Finishing update...';
+      document.open();
+      document.write(request.responseText);
+      document.close();
+    }else{
+      text.textContent='Upload failed.';
+      button.disabled=false;
+    }
+  };
+  request.onerror=function(){text.textContent='Upload failed.';button.disabled=false;};
+  request.open('POST',form.action);
+  request.send(new FormData(form));
+});
 
 function validateIP(ip){
   let p=ip.split('.');

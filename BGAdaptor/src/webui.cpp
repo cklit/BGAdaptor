@@ -68,7 +68,8 @@ void handleOTAResult() {
         "h2{font-size:16px;font-weight:500;margin:0 0 .5rem}"
         "p{font-size:13px;color:#888;margin:0 0 1.25rem}"
         "a{display:inline-block;height:36px;line-height:36px;padding:0 14px;font-size:13px;"
-        "border-radius:8px;background:#1D9E75;color:#fff;text-decoration:none}</style></head><body><div>";
+        "border-radius:8px;background:" + String(failed ? "#D64545" : "#1D9E75") +
+        ";color:#fff;text-decoration:none}</style></head><body><div>";
     page += failed
         ? "<h2>Update failed</h2><p>The firmware was not installed :(.</p>"
         : "<h2>Update successful</h2><p>Restarting the BGAdaptor. You will be redirected automatically in a few seconds.</p>";
@@ -506,7 +507,7 @@ void handleUpdateHaloPlayIcon() {
 void handleUpdateHaloVolumeControls() {
     if (server.hasArg("enabled")) {
         haloVolumeControls = (server.arg("enabled") == "true");
-        preferences.putBool("haloVolumeControls", haloVolumeControls);
+        preferences.putBool("haloVolCtrl", haloVolumeControls);
         if (!haloVolumeControls && haloClient.available()) {
             sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
         }
