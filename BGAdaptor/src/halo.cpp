@@ -104,7 +104,11 @@ void sendConfigToHalo() {
     if (deviceType == DEVICE_RECORD) buttons += haloButton(HALO_BTN_STOP, "II") + ",";
     if (deviceType == DEVICE_TAPE)   buttons += haloButton(HALO_BTN_STOP, "Stop") + ",";
     buttons += haloButton(HALO_BTN_NEXT, nextLabel);
-    if (deviceType == DEVICE_RECORD) buttons += "," + haloButton(HALO_BTN_STANDBY, "Stby");
+    if (deviceType == DEVICE_RECORD) {
+        buttons += "," + (playIcon
+            ? haloIconButton(HALO_BTN_STANDBY, "sleep", "", "")
+            : haloButton(HALO_BTN_STANDBY, "Stby"));
+    }
 
     String jsonMessage = String("{") +
         "\"configuration\": {" +
