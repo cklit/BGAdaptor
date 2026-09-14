@@ -110,6 +110,9 @@ void checkStoppedTrackTimeout() {
             // disc and entered standby, even though it reports STOPPED only.
             setUiState("Standby", "-", 0);
             unexpandPlaybackSpeaker();
+            if (haloClient.available()) {
+                updateHaloPlayback(false, " ");
+            }
             if (mqtt.isConnected()) {
                 bgPlaybackState.setValue("Standby");
             }
