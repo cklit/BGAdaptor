@@ -25,6 +25,13 @@ static WebsocketsClient peerClient;
 static unsigned long peerLastReconnect = 0;
 static unsigned long peerReconnectDelay = reconnectInterval;
 static bool peerHaloDirty = false;
+// The peer only sends on state changes, so an idle Standby can leave this
+// socket silent for a long time — long enough for a WiFi AP/NAT to drop it
+// without either side seeing a close. available() then keeps reporting true
+// forever, so nothing here would ever notice to reconnect. Every other
+// long-lived websocket in this codebase (product, Halo) pings on the same
+// timeout for the same reason; this one just never got it when it was added.
+static unsigned long peerLastPingReceived = 0;
 
 // Command queue. Entries are string literals, so nothing is allocated in the
 // Halo callback and nothing can dangle. Four is enough to absorb a burst of
@@ -235,7 +242,10 @@ static void peerOnMessage(WebsocketsMessage message) {
     peerPlaying = playing;
     if (state.length()) peerStateText = state;
     if (track.length()) peerTrack = track;
-    if (changed) peerHaloDirty = true;
+    if (changed) {
+        peerHaloDirty = true;
+        beogramStateDirty = true;   // the web page shows the peer's deck too
+    }
 }
 
 // ── Halo page 2 ─────────────────────────────────────────────────────
@@ -275,10 +285,15 @@ void peerPushHaloState() {
     // rendering a Stopped title that may be a lie.
     const char* title = !peerOnline ? "Offline" : (peerPlaying ? "Playing" : "Stopped");
 
+    // Text mode has no separate state field for the track, so the subtitle
+    // must be resent on every change including a clear — an omitted field
+    // (nullptr) leaves the Halo showing whatever it had before, which is how
+    // a track used to stick around after the peer's deck went to standby. A
+    // lone space is what actually blanks it; an empty string is ignored.
     String sub;
     const char* subtitle = nullptr;
-    if (peerOnline && peerDeck == DEVICE_CD && peerTrack.length() && peerTrack != "-") {
-        sub = "Track " + peerTrack;
+    if (peerDeck == DEVICE_CD) {
+        sub = (peerOnline && peerTrack.length() && peerTrack != "-") ? ("Track " + peerTrack) : " ";
         subtitle = sub.c_str();
     }
 
@@ -333,16 +348,37 @@ void peerLoop() {
     if (up != peerOnline) {
         peerOnline = up;
         peerHaloDirty = true;
+        beogramStateDirty = true;
         if (!up) {
             // Keep the last known playing flag out of the UI: we no longer know.
             peerStateText = "Unknown";
         }
     }
 
+    // available() only reflects what this side's socket thinks, and a
+    // connection an AP quietly dropped while idle can look open forever.
+    // Ping on the same schedule as the other long-lived sockets so a dead
+    // link gets noticed (ping/pong or send failing closes it) instead of
+    // silently sitting there.
+    if (up) {
+        if (millis() - peerLastPingReceived >= pingTimeout) {
+            peerClient.ping();
+            peerLastPingReceived = millis();
+        }
+    } else {
+        peerLastPingReceived = millis();
+    }
+
     if (!up && millis() - peerLastReconnect > peerReconnectDelay) {
         peerLastReconnect = millis();
         if (peerClient.connect(("ws://" + peerIP + ":" + UI_WS_PORT).c_str())) {
             peerClient.onMessage(peerOnMessage);
+            peerClient.onEvent([](WebsocketsEvent event, String) {
+                if (event == WebsocketsEvent::ConnectionOpened ||
+                    event == WebsocketsEvent::GotPing || event == WebsocketsEvent::GotPong) {
+                    peerLastPingReceived = millis();
+                }
+            });
             // Tell the peer who is driving it, so it can show that its own
             // Halo settings are not the ones in play. adaptorName is
             // sanitised at save time, so it is safe in hand-built JSON.
@@ -350,6 +386,7 @@ void peerLoop() {
             Serial.println("Peer state websocket connected");
             peerReconnectDelay = reconnectInterval;
             peerOnline = true;
+            peerLastPingReceived = millis();
             peerHaloDirty = true;
             // Cheap moment to notice the peer's deck type was changed.
             peerFetchDeckType();

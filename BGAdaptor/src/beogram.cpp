@@ -149,16 +149,29 @@ void processBuffer(BeogramFeedback state) {
         }
         if (haloClient.available()) {
             updateHaloPlayback(true);
-        }       
+        }
         if (platform == PLATFORM_MOZART) {
             if (!lineInActive) {
+                // Fresh start: the product isn't on our source yet, so there
+                // is no experience to expand into. It confirms the switch
+                // over the websocket, and that handler does the expand —
+                // same as always.
                 sendHttpRequest("/api/v1/playback/sources/active/" + triggerSource, "POST");
             } else {
+                // Already on our source, so no source-change event is coming
+                // to trigger the expand. This is the resume case: a Beogram
+                // that reached standby on its own between a Stop and the next
+                // Play already released the speaker (unexpandPlaybackSpeaker()
+                // at STANDBY_FB) without the product ever leaving our source.
+                // Idempotent, so this is a no-op when already expanded.
+                expandToPlaybackSpeaker();
                 sendHttpRequest("/api/v1/playback/command/play", "POST");
             }
         } else {
             if (!lineInActive) {
                 forceSource();
+            } else {
+                expandToPlaybackSpeaker();
             }
         }
     } else if (state == STOPPED_FB || state == STANDBY_FB) {
@@ -185,16 +198,23 @@ void processBuffer(BeogramFeedback state) {
             bgPlaybackState.setValue(state == STOPPED_FB ? "Stopped" : "Standby");
             bgPlaying.setState(false);
         }
+        // Standby is unambiguous — clear the Halo display whenever the deck
+        // reports it, even if we didn't think this deck was the one playing
+        // (a manual Standby command skips straight here without ever
+        // touching playbackState/lineInActive first).
+        if (state == STANDBY_FB && haloClient.available()) {
+            updateHaloPlayback(false, " ");
+        }
         if (playbackState == PLAYING && lineInActive) {
             playbackState = STOPPED;
             Serial.println(state == STOPPED_FB ? "⏹️ Beogram has stopped." : "⏹️ Beogram has turned off.");
             if (platform == PLATFORM_MOZART) {
                 sendHttpRequest("/api/v1/playback/command/stop", "POST");
             }
-            if (haloClient.available()) {
+            if (state == STOPPED_FB && haloClient.available()) {
                 updateHaloPlayback(false, " ");
             }
-        }        
+        }
     } else if (state == EJECTED_FB) {
         playbackState = STOPPED;
         stoppedPendingClear = false;

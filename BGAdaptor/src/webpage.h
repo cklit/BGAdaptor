@@ -61,7 +61,7 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     @media(prefers-color-scheme:dark){.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}.btn-highlight:hover{background:#178a65}}
     .btn-danger{border-color:#f09595;color:#a32d2d}
     .btn-danger:hover{background:#fcebeb}
-    #bg-controls .btn{height:48px;min-width:56px;padding:0;font-size:20px;border-radius:10px}    
+    #bg-controls .btn,#peer-controls .btn{height:48px;min-width:56px;padding:0;font-size:20px;border-radius:10px}    
     @media(prefers-color-scheme:dark){.btn-danger{border-color:#793333;color:#f09595}.btn-danger:hover{background:#2a1a1a}}
     .select-row{display:flex;align-items:center;justify-content:space-between;gap:1rem}
     .select-row label{font-size:13px;color:#666}
@@ -135,6 +135,25 @@ static const char* htmlPage PROGMEM = R"rawliteral(
       <button class="btn" id="bg-play" title="Play"><svg class="ic"><use href="#i-player-play"/></svg></button>
       <button class="btn" id="bg-stop" title="Stop"><svg class="ic" id="bg-stop-icon"><use href="#i-chevron-up"/></svg></button> 
       <button class="btn" id="bg-next" title="Next track"><svg class="ic" id="bg-next-icon"><use href="#i-player-skip-forward"/></svg></button>
+    </div>
+  </div>
+
+  <div class="card" id="peer-card" style="display:none">
+     <div class="card-header"><svg class="ic" id="peer-card-icon"><use href="#i-disc"/></svg><h2 id="peer-card-title">Peer</h2><button class="hdr-btn" id="peer-standby" title="Standby"><svg class="ic"><use href="#i-power"/></svg></button></div>
+    <div class="status-row">
+      <span class="status-label">State</span>
+      <span class="badge disconnected" id="peer-state"><svg class="ic"><use href="#i-circle"/></svg>Unknown</span>
+    </div>
+    <div class="status-row" id="peer-track-row">
+      <span class="status-label">Track</span>
+      <span class="ip-chip" id="peer-track">-</span>
+    </div>
+    <div class="input-row" id="peer-controls" style="margin-top:8px;justify-content:center;gap:12px">
+      <button class="btn" id="peer-prev" title="Previous track"><svg class="ic" id="peer-prev-icon"><use href="#i-player-skip-back"/></svg></button>
+      <button class="btn" id="peer-playpause" title="Play"><svg class="ic" id="peer-playpause-icon"><use href="#i-player-play"/></svg></button>
+      <button class="btn" id="peer-play" title="Play"><svg class="ic"><use href="#i-player-play"/></svg></button>
+      <button class="btn" id="peer-stop" title="Stop"><svg class="ic" id="peer-stop-icon"><use href="#i-chevron-up"/></svg></button>
+      <button class="btn" id="peer-next" title="Next track"><svg class="ic" id="peer-next-icon"><use href="#i-player-skip-forward"/></svg></button>
     </div>
   </div>
 
@@ -448,11 +467,71 @@ function renderBeogram(state,track,playing){
   pp.title=playing?'Pause':'Play';
 }
 
+// The peer's deck, shown on this page only when one is linked. Same layout
+// rules as the local deck above — a CD toggles one button and reports a
+// track, the others get separate Play and Stop.
+let peerPlayingNow=false,peerDeckType='';
+function applyPeerDeck(t){
+  peerDeckType=t;
+  let cd=(t==='cd'),tape=(t==='tape');
+  document.getElementById('peer-playpause').style.display=cd?'inline-flex':'none';
+  document.getElementById('peer-play').style.display=cd?'none':'inline-flex';
+  document.getElementById('peer-stop').style.display=cd?'none':'inline-flex';
+  document.getElementById('peer-track-row').style.display=cd?'flex':'none';
+  setIcon('peer-prev-icon',tape?'chevrons-left':'player-skip-back');
+  setIcon('peer-next-icon',tape?'chevrons-right':'player-skip-forward');
+  document.getElementById('peer-prev').title=tape?'Cue backwards':'Previous track';
+  document.getElementById('peer-next').title=tape?'Cue forward':'Next track';
+  setIcon('peer-stop-icon',tape?'player-stop':'chevron-up');
+  document.getElementById('peer-stop').title=tape?'Stop':'Lift tonearm';
+  setIcon('peer-card-icon',(DECK_INFO[t]||DECK_INFO.cd)[1]);
+}
+
+function renderPeer(d){
+  let has=d.peer_ip&&d.peer_ip!=='';
+  document.getElementById('peer-card').style.display=has?'block':'none';
+  if(!has)return;
+  let deck=d.peer_deck||'cd';
+  if(deck!==peerDeckType)applyPeerDeck(deck);
+  document.getElementById('peer-card-title').textContent=
+    (d.peer_title||(DECK_INFO[deck]||DECK_INFO.cd)[0])+' (peer)';
+
+  let online=!!d.peer_online,playing=online&&!!d.peer_playing;
+  peerPlayingNow=playing;
+  let b=document.getElementById('peer-state');
+  b.className='badge '+(playing?'connected':'disconnected');
+  b.innerHTML='<svg class="ic"><use href="#'+(playing?'i-circle-filled':'i-circle')+'"/></svg>'
+              +(online?(d.peer_state||'Unknown'):'Offline');
+  document.getElementById('peer-track').textContent=online?(d.peer_track||'-'):'-';
+  setIcon('peer-playpause-icon',playing?'player-pause':'player-play');
+  document.getElementById('peer-playpause').title=playing?'Pause':'Play';
+  // Nothing to send to a peer that is not answering, so do not pretend.
+  document.querySelectorAll('#peer-controls .btn,#peer-standby')
+    .forEach(el=>{el.disabled=!online;});
+}
+
+['play','stop','next','prev','standby'].forEach(function(cmd){
+  document.getElementById('peer-'+cmd).addEventListener('click',function(){
+    fetch('/peer-command/'+cmd,{method:'POST'});
+  });
+});
+document.getElementById('peer-playpause').addEventListener('click',function(){
+  fetch('/peer-command/'+(peerPlayingNow?'stop':'play'),{method:'POST'});
+});
+
 let bgWs=null;
 function connectBgWs(){
   bgWs=new WebSocket('ws://'+location.hostname+':81');
   bgWs.onmessage=function(e){
-    try{let d=JSON.parse(e.data);renderBeogram(d.state,d.track,d.playing);}catch(err){}
+    try{
+      let d=JSON.parse(e.data);
+      renderBeogram(d.state,d.track,d.playing);
+      // Peer keys are only present when one is linked; without them the card
+      // keeps whatever the last status poll put there.
+      if(d.peer_deck!==undefined)renderPeer({peer_ip:'x',peer_deck:d.peer_deck,
+        peer_title:d.peer_title,peer_online:d.peer_online,peer_playing:d.peer_playing,
+        peer_state:d.peer_state,peer_track:d.peer_track});
+    }catch(err){}
   };
   bgWs.onclose=function(){setTimeout(connectBgWs,3000);};
   bgWs.onerror=function(){bgWs.close();};
@@ -519,6 +598,8 @@ function updateStatus(){
 
     // A peer adaptor only adds a second Halo page, so it belongs to the Halo
     // card and is shown with the rest of the linked-Halo rows.
+    renderPeer(d);
+
     document.getElementById('peer-btn').textContent=
       d.peer_ip ? ((d.peer_title||d.peer_name||d.peer_ip)+(d.peer_online?'':' (offline)')) : 'None';
 
@@ -699,6 +780,9 @@ document.getElementById('halo-unlink-btn').addEventListener('click',function(){
 });
 
 let currentDeviceType='';
+// The custom name replaces the deck-type label on the player card, but the
+// page heading always stays "BGAdaptor" — the name is not the product.
+let adaptorNameValue='';
 
 // Title, icon, and standby label per deck type.
 const DECK_INFO={
@@ -706,6 +790,11 @@ const DECK_INFO={
   record:['Beogram','vinyl'],
   tape:  ['Beocord','device-audio-tape']
 };
+
+function updateBgCardTitle(){
+  let info=DECK_INFO[currentDeviceType]||DECK_INFO.cd;
+  document.getElementById('bg-card-title').textContent=adaptorNameValue||info[0];
+}
 
 function applyDeviceType(t){
   currentDeviceType=t;
@@ -728,7 +817,7 @@ function applyDeviceType(t){
   setIcon('bg-stop-icon',tape?'player-stop':'chevron-up');
   document.getElementById('bg-stop').title=tape?'Stop':'Lift tonearm';
   let info=DECK_INFO[t]||DECK_INFO.cd;
-  document.getElementById('bg-card-title').textContent=info[0];
+  updateBgCardTitle();
   setIcon('bg-card-icon',info[1]);
   document.getElementById('bg-standby').title=info[0]+' standby';
 }
@@ -784,8 +873,9 @@ function applyDrivenBy(name){
 }
 
 function applyAdaptorName(name){
-  document.getElementById('page-heading').textContent=name||'BGAdaptor';
   document.title=name?('BGAdaptor \u2014 '+name):'BGAdaptor';
+  adaptorNameValue=name||'';
+  updateBgCardTitle();
 }
 
 document.getElementById('adaptor-name-btn').addEventListener('click',function(){

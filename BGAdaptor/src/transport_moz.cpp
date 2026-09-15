@@ -172,7 +172,9 @@ void processWebSocketMessage(const String& message) {
         playbackState = STOPPED;
         clearBeogramTrack();
         if (haloClient.available()) {
-            updateHaloPlayback(false, "");
+            // A blank string is silently ignored by the Halo — a lone
+            // space is what actually blanks the subtitle (see beogram.cpp).
+            updateHaloPlayback(false, " ");
         }
         sendHexCommand(STANDBY);
         Serial.println("🛑 Standby command detected on websocket. Sent STBY command to Beogram");

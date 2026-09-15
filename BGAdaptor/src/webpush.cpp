@@ -1,5 +1,6 @@
 #include "webpush.h"
 #include <ArduinoJson.h>
+#include "peer.h"
 
 static WebsocketsServer uiServer;
 static const int MAX_UI_CLIENTS = 4;
@@ -18,7 +19,20 @@ static String beogramStateJson() {
                                    : deviceType == DEVICE_TAPE   ? "tape" : "cd") + "\",";
     // Sanitised at save time, so it is safe to drop into hand-built JSON.
     json += "\"title\":\"" + adaptorName + "\",";
-    json += "\"playing\":" + String(beogramPlaying ? "true" : "false") + "}";
+    json += "\"playing\":" + String(beogramPlaying ? "true" : "false");
+    // A linked peer's deck rides along, so the page can show its controls
+    // live rather than waiting for the five-second status poll. A peer's own
+    // browser never sees these keys, because a peer has no peer of its own.
+    if (peerConfigured()) {
+        json += ",\"peer_online\":" + String(peerOnline ? "true" : "false");
+        json += ",\"peer_playing\":" + String(peerPlaying ? "true" : "false");
+        json += ",\"peer_state\":\"" + peerStateText + "\"";
+        json += ",\"peer_track\":\"" + peerTrack + "\"";
+        json += ",\"peer_deck\":\"" + String(peerDeck == DEVICE_RECORD ? "record"
+                                             : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\"";
+        json += ",\"peer_title\":\"" + peerTitle + "\"";
+    }
+    json += "}";
     return json;
 }
 

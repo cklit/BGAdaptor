@@ -871,10 +871,11 @@ a:hover{text-decoration:underline}
         <li>A "secondary" (or peer) BGAdaptor connected to a deck and another Bang & Olufsen product.</li>
         <li>Both adaptors must be on the same network, since Beolink Multiroom is used to distribute audio.</li>
         <li>Setup Auto-expand on the peer BGAdaptor. Point to the Bang & Olufsen product the primary BGAdaptor is connected to (given it has speakers connected). Alternatively, setup Auto-expand on both BGAdaptors to point to a third Bang & Olufsen product.
-    </ul><br>
+    </ul>
     <h3>What it does</h3>
     <ul>
       <li>Adds a second player controls page on Beoremote Halo, corresponding to the deck connected to the BGAdaptor peer.</li>
+      <li>Adds player controls from the peer deck on the "primary" BGAdaptors front page.</li>
       <li>Shows the peer's real playing state on that page, pushed live as it changes.</li>
       <li>It stops the other deck when one starts, if the Auto-stop setting is enabled.</li>
     </ul>
@@ -1018,6 +1019,8 @@ void handleStatus() {
                                                 : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\",";
     jsonResponse += "\"peer_online\":" + String(peerOnline ? "true" : "false") + ",";
     jsonResponse += "\"peer_playing\":" + String(peerPlaying ? "true" : "false") + ",";
+    jsonResponse += "\"peer_state\":\"" + peerStateText + "\",";
+    jsonResponse += "\"peer_track\":\"" + peerTrack + "\",";
     jsonResponse += "\"peer_auto_stop\":" + String(peerAutoStop ? "true" : "false") + ",";
     jsonResponse += "\"trigger_source\":\"" + triggerSource + "\"";            
     jsonResponse += "}";
@@ -1168,6 +1171,15 @@ void registerWebRoutes() {
     });
     
     
+    // Player controls for a linked peer's deck. Queued and sent from the
+    // loop like every other peer command, so an unreachable peer cannot hold
+    // up the web server.
+    server.on("/peer-command/play",    HTTP_POST, []() { peerSendCommand("play");    server.send(200, "application/json", "{\"status\":\"queued\"}"); });
+    server.on("/peer-command/stop",    HTTP_POST, []() { peerSendCommand("stop");    server.send(200, "application/json", "{\"status\":\"queued\"}"); });
+    server.on("/peer-command/next",    HTTP_POST, []() { peerSendCommand("next");    server.send(200, "application/json", "{\"status\":\"queued\"}"); });
+    server.on("/peer-command/prev",    HTTP_POST, []() { peerSendCommand("prev");    server.send(200, "application/json", "{\"status\":\"queued\"}"); });
+    server.on("/peer-command/standby", HTTP_POST, []() { peerSendCommand("standby"); server.send(200, "application/json", "{\"status\":\"queued\"}"); });
+
     server.on("/", handleRoot);
     server.on("/update", HTTP_GET, handleUpdate);
     server.on("/update-halo", HTTP_GET, handleUpdateHalo);
