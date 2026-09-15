@@ -159,12 +159,11 @@ void processBuffer(BeogramFeedback state) {
                 sendHttpRequest("/api/v1/playback/sources/active/" + triggerSource, "POST");
             } else {
                 // Already on our source, so no source-change event is coming
-                // to trigger the expand. This is the resume case: a Beogram
-                // that reached standby on its own between a Stop and the next
-                // Play already released the speaker (unexpandPlaybackSpeaker()
-                // at STANDBY_FB) without the product ever leaving our source.
-                // Idempotent, so this is a no-op when already expanded.
-                expandToPlaybackSpeaker();
+                // to trigger the expand — but Mozart won't join a speaker to
+                // a source it hasn't itself confirmed as playing yet, so the
+                // expand can't be requested here either. Ask it to resume;
+                // its own "started" websocket event (transport_moz.cpp) is
+                // what actually calls expandToPlaybackSpeaker() once it's safe to.
                 sendHttpRequest("/api/v1/playback/command/play", "POST");
             }
         } else {
