@@ -236,15 +236,23 @@ static const char* htmlPage PROGMEM = R"rawliteral(
         <span class="badge disconnected" id="product-status"><svg class="ic"><use href="#i-circle"/></svg>Disconnected</span>
       </div>
     </div>
-    <div class="divider"></div>
-    <div class="select-row" style="margin-bottom:0">
-      <label for="sourceSelect">Input source</label>
-      <select id="sourceSelect"></select>
+    <div id="source-select-row" style="display:none">
+      <div class="divider"></div>
+      <div class="select-row" style="margin-bottom:0">
+        <label for="sourceSelect">Input source</label>
+        <select id="sourceSelect"></select>
+      </div>
     </div>
     <div id="playback-speaker-row" style="display:none">
       <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
         <label>Auto-expand <span class="optional">Optional</span></label>
         <a href="/playback-speaker"><button class="btn" id="playback-speaker-btn">None</button></a>
+      </div>
+    </div>
+    <div id="peer-link-row" style="display:none">
+      <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
+        <label>Peer adaptor <span class="optional">Optional</span></label>
+        <a href="/peer"><button class="btn" id="peer-btn">None</button></a>
       </div>
     </div>
     <div class="action-row" id="product-action-row" style="display:none">
@@ -308,10 +316,6 @@ static const char* htmlPage PROGMEM = R"rawliteral(
           <input type="checkbox" id="haloVolumeControlsToggle">
           <span class="toggle-slider"></span>
         </label>
-      </div>
-      <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
-        <label>Peer adaptor <span class="optional">Optional</span></label>
-        <a href="/peer"><button class="btn" id="peer-btn">None</button></a>
       </div>
     </div>
     <div class="action-row" id="halo-action-row" style="display:none">
@@ -584,6 +588,8 @@ function updateStatus(){
     document.getElementById('product-linked-rows').style.display=hasProduct?'block':'none';
     document.getElementById('product-connect-form').style.display=hasProduct?'none':'flex';
     document.getElementById('product-action-row').style.display=hasProduct?'flex':'none';
+    // Nothing to pick a trigger source from without a product defined.
+    document.getElementById('source-select-row').style.display=hasProduct?'block':'none';
     // Auto-expand is only meaningful once the product is reachable.
     document.getElementById('playback-speaker-row').style.display=d.product_connected?'block':'none';
     document.getElementById('playback-speaker-btn').textContent=d.playback_speaker||'None';
@@ -596,12 +602,16 @@ function updateStatus(){
     refreshNameHighlight();
     applyAdaptorName(d.adaptor_name||'');
 
-    // A peer adaptor only adds a second Halo page, so it belongs to the Halo
-    // card and is shown with the rest of the linked-Halo rows.
     renderPeer(d);
 
     document.getElementById('peer-btn').textContent=
       d.peer_ip ? ((d.peer_title||d.peer_name||d.peer_ip)+(d.peer_online?'':' (offline)')) : 'None';
+    // Grouped with Auto-expand rather than the Halo card: peer only pairs
+    // usefully with a deck here, and the two settings work together (a peer
+    // and Auto-expand together let two adaptors share one speaker). Same
+    // gating as Auto-expand — a Halo isn't required to set the link up.
+    document.getElementById('peer-link-row').style.display=
+      d.product_connected?'block':'none';
 
     // When another adaptor is driving this one, its Halo is the one showing
     // this deck — on its second page. Leaving these controls live invites

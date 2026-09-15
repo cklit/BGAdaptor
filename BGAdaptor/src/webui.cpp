@@ -1118,6 +1118,13 @@ void handleFactoryReset() {
         </html>
         )rawliteral");
 
+    // A clean close here lets the peer notice at once, via the same closed
+    // socket it already watches for. Otherwise ESP.restart() below just cuts
+    // the connection, and the peer is left thinking it is still driven by
+    // this adaptor — with its own Halo card disabled — until it works that
+    // out on its own.
+    if (peerConfigured()) peerSetLink("", "", "");
+
     preferences.clear();   // product, Halo, MQTT, deck type, trigger source
     wm.resetSettings();    // WiFi credentials
     delay(1000);
