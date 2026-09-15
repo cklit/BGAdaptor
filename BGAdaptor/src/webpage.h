@@ -61,7 +61,7 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     @media(prefers-color-scheme:dark){.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}.btn-highlight:hover{background:#178a65}}
     .btn-danger{border-color:#f09595;color:#a32d2d}
     .btn-danger:hover{background:#fcebeb}
-    #bg-controls .btn{height:48px;min-width:56px;padding:0;font-size:20px;border-radius:10px}    
+    #bg-controls .btn,#peer-controls .btn{height:48px;min-width:56px;padding:0;font-size:20px;border-radius:10px}    
     @media(prefers-color-scheme:dark){.btn-danger{border-color:#793333;color:#f09595}.btn-danger:hover{background:#2a1a1a}}
     .select-row{display:flex;align-items:center;justify-content:space-between;gap:1rem}
     .select-row label{font-size:13px;color:#666}
@@ -116,7 +116,7 @@ static const char* htmlPage PROGMEM = R"rawliteral(
 <div class="page">
   <div class="page-title">
     <svg class="ic"><use href="#i-disc"/></svg>
-    <h1>BGAdaptor</h1>
+    <h1 id="page-heading">BGAdaptor</h1>
   </div>
 
   <div class="card">
@@ -138,6 +138,25 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     </div>
   </div>
 
+  <div class="card" id="peer-card" style="display:none">
+     <div class="card-header"><svg class="ic" id="peer-card-icon"><use href="#i-disc"/></svg><h2 id="peer-card-title">Peer</h2><button class="hdr-btn" id="peer-standby" title="Standby"><svg class="ic"><use href="#i-power"/></svg></button></div>
+    <div class="status-row">
+      <span class="status-label">State</span>
+      <span class="badge disconnected" id="peer-state"><svg class="ic"><use href="#i-circle"/></svg>Unknown</span>
+    </div>
+    <div class="status-row" id="peer-track-row">
+      <span class="status-label">Track</span>
+      <span class="ip-chip" id="peer-track">-</span>
+    </div>
+    <div class="input-row" id="peer-controls" style="margin-top:8px;justify-content:center;gap:12px">
+      <button class="btn" id="peer-prev" title="Previous track"><svg class="ic" id="peer-prev-icon"><use href="#i-player-skip-back"/></svg></button>
+      <button class="btn" id="peer-playpause" title="Play"><svg class="ic" id="peer-playpause-icon"><use href="#i-player-play"/></svg></button>
+      <button class="btn" id="peer-play" title="Play"><svg class="ic"><use href="#i-player-play"/></svg></button>
+      <button class="btn" id="peer-stop" title="Stop"><svg class="ic" id="peer-stop-icon"><use href="#i-chevron-up"/></svg></button>
+      <button class="btn" id="peer-next" title="Next track"><svg class="ic" id="peer-next-icon"><use href="#i-player-skip-forward"/></svg></button>
+    </div>
+  </div>
+
   <div class="card" id="settings-bar">
     <div class="settings-row">
       <svg class="ic" id="settings-icon"><use href="#i-settings"/></svg>
@@ -154,13 +173,21 @@ static const char* htmlPage PROGMEM = R"rawliteral(
   <div id="settings-cards">
   <div class="card">
     <div class="card-header"><svg class="ic"><use href="#i-square-rounded-arrow-right"/></svg><h2>Type</h2></div>
-    <div class="select-row" style="margin-bottom:0">
+    <div class="select-row">
       <label>Connected deck</label>
       <div class="seg" id="deviceTypeSeg">
         <button data-type="cd" id="dtype-cd">CD</button>
         <button data-type="record" id="dtype-record">Turntable</button>
         <button data-type="tape" id="dtype-tape">Tape</button>
       </div>
+    </div>
+    <div class="form-group" style="margin-top:.75rem;margin-bottom:0">
+      <label for="adaptorName">Name <span class="optional">Optional</span></label>
+      <div class="input-row">
+        <input type="text" id="adaptorName" maxlength="15" placeholder="From deck type">
+        <button class="btn" id="adaptor-name-btn">Save</button>
+      </div>
+      <span class="info-text" id="adaptor-name-note" style="display:none">Saved</span>
     </div>
   </div>
 
@@ -216,7 +243,7 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     </div>
     <div id="playback-speaker-row" style="display:none">
       <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
-        <label>Secondary playback speaker <span class="optional">Optional</span></label>
+        <label>Auto-expand <span class="optional">Optional</span></label>
         <a href="/playback-speaker"><button class="btn" id="playback-speaker-btn">None</button></a>
       </div>
     </div>
@@ -225,9 +252,10 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="halo-card">
     <div class="card-header"><svg class="ic"><use href="#i-device-remote"/></svg><h2>Beoremote Halo</h2></div>
-    <div class="form-group" id="halo-connect-form" style="margin-top:0;margin-bottom:1.25rem">
+    <span class="info-text" id="halo-driven-note" style="display:none"></span>
+<div class="form-group" id="halo-connect-form" style="margin-top:.75rem;margin-bottom:1.25rem">
       <label for="halo-discover-results">Halo</label>
       <select id="halo-discover-results" style="width:100%">
         <option value="">Select a Halo&hellip;</option>
@@ -261,25 +289,29 @@ static const char* htmlPage PROGMEM = R"rawliteral(
       </div>
       <div class="divider"></div>
       <div class="toggle-row">
-        <span>Activate controls when Halo wakes up</span>
+        <span>On wake-up: Jump to player controls if a deck is playing</span>
         <label class="toggle">
           <input type="checkbox" id="featureToggle">
           <span class="toggle-slider"></span>
         </label>
       </div>
       <div class="toggle-row" id="halo-playicon-row" style="display:none">
-        <span>Show turntable icon on the Play button</span>
+        <span>Show an icon on the Play button</span>
         <label class="toggle">
           <input type="checkbox" id="haloPlayIconToggle">
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <div class="toggle-row">
-        <span>Volume controls on Play button</span>
+      <div class="toggle-row" id="halo-volume-row">
+        <span>Volume control of connected product on Play button</span>
         <label class="toggle">
           <input type="checkbox" id="haloVolumeControlsToggle">
           <span class="toggle-slider"></span>
         </label>
+      </div>
+      <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
+        <label>Peer adaptor <span class="optional">Optional</span></label>
+        <a href="/peer"><button class="btn" id="peer-btn">None</button></a>
       </div>
     </div>
     <div class="action-row" id="halo-action-row" style="display:none">
@@ -435,11 +467,71 @@ function renderBeogram(state,track,playing){
   pp.title=playing?'Pause':'Play';
 }
 
+// The peer's deck, shown on this page only when one is linked. Same layout
+// rules as the local deck above — a CD toggles one button and reports a
+// track, the others get separate Play and Stop.
+let peerPlayingNow=false,peerDeckType='';
+function applyPeerDeck(t){
+  peerDeckType=t;
+  let cd=(t==='cd'),tape=(t==='tape');
+  document.getElementById('peer-playpause').style.display=cd?'inline-flex':'none';
+  document.getElementById('peer-play').style.display=cd?'none':'inline-flex';
+  document.getElementById('peer-stop').style.display=cd?'none':'inline-flex';
+  document.getElementById('peer-track-row').style.display=cd?'flex':'none';
+  setIcon('peer-prev-icon',tape?'chevrons-left':'player-skip-back');
+  setIcon('peer-next-icon',tape?'chevrons-right':'player-skip-forward');
+  document.getElementById('peer-prev').title=tape?'Cue backwards':'Previous track';
+  document.getElementById('peer-next').title=tape?'Cue forward':'Next track';
+  setIcon('peer-stop-icon',tape?'player-stop':'chevron-up');
+  document.getElementById('peer-stop').title=tape?'Stop':'Lift tonearm';
+  setIcon('peer-card-icon',(DECK_INFO[t]||DECK_INFO.cd)[1]);
+}
+
+function renderPeer(d){
+  let has=d.peer_ip&&d.peer_ip!=='';
+  document.getElementById('peer-card').style.display=has?'block':'none';
+  if(!has)return;
+  let deck=d.peer_deck||'cd';
+  if(deck!==peerDeckType)applyPeerDeck(deck);
+  document.getElementById('peer-card-title').textContent=
+    (d.peer_title||(DECK_INFO[deck]||DECK_INFO.cd)[0])+' (peer)';
+
+  let online=!!d.peer_online,playing=online&&!!d.peer_playing;
+  peerPlayingNow=playing;
+  let b=document.getElementById('peer-state');
+  b.className='badge '+(playing?'connected':'disconnected');
+  b.innerHTML='<svg class="ic"><use href="#'+(playing?'i-circle-filled':'i-circle')+'"/></svg>'
+              +(online?(d.peer_state||'Unknown'):'Offline');
+  document.getElementById('peer-track').textContent=online?(d.peer_track||'-'):'-';
+  setIcon('peer-playpause-icon',playing?'player-pause':'player-play');
+  document.getElementById('peer-playpause').title=playing?'Pause':'Play';
+  // Nothing to send to a peer that is not answering, so do not pretend.
+  document.querySelectorAll('#peer-controls .btn,#peer-standby')
+    .forEach(el=>{el.disabled=!online;});
+}
+
+['play','stop','next','prev','standby'].forEach(function(cmd){
+  document.getElementById('peer-'+cmd).addEventListener('click',function(){
+    fetch('/peer-command/'+cmd,{method:'POST'});
+  });
+});
+document.getElementById('peer-playpause').addEventListener('click',function(){
+  fetch('/peer-command/'+(peerPlayingNow?'stop':'play'),{method:'POST'});
+});
+
 let bgWs=null;
 function connectBgWs(){
   bgWs=new WebSocket('ws://'+location.hostname+':81');
   bgWs.onmessage=function(e){
-    try{let d=JSON.parse(e.data);renderBeogram(d.state,d.track,d.playing);}catch(err){}
+    try{
+      let d=JSON.parse(e.data);
+      renderBeogram(d.state,d.track,d.playing);
+      // Peer keys are only present when one is linked; without them the card
+      // keeps whatever the last status poll put there.
+      if(d.peer_deck!==undefined)renderPeer({peer_ip:'x',peer_deck:d.peer_deck,
+        peer_title:d.peer_title,peer_online:d.peer_online,peer_playing:d.peer_playing,
+        peer_state:d.peer_state,peer_track:d.peer_track});
+    }catch(err){}
   };
   bgWs.onclose=function(){setTimeout(connectBgWs,3000);};
   bgWs.onerror=function(){bgWs.close();};
@@ -468,9 +560,14 @@ function updateStatus(){
     document.getElementById('featureToggle').checked=d.feature_enabled;
     document.getElementById('haloPlayIconToggle').checked=d.halo_play_icon;
     document.getElementById('haloVolumeControlsToggle').checked=d.halo_volume_controls;
-    // Only meaningful for a turntable with a Halo linked.
+    // Applies to any deck type now — a turntable gets its own artwork, CD
+    // and tape get the generic music icon.
     document.getElementById('halo-playicon-row').style.display=
-      (d.device_type==='record'&&d.halo_ip&&d.halo_ip!=='')?'flex':'none';
+      (d.halo_ip&&d.halo_ip!=='')?'flex':'none';
+    // The wheel adjusts this adaptor's own product, on either page — with no
+    // product linked there is nothing for it to act on.
+    document.getElementById('halo-volume-row').style.display=
+      (d.product_ip&&d.product_ip!=='')?'flex':'none';
     if(d.device_type&&d.device_type!==currentDeviceType)applyDeviceType(d.device_type);
     document.getElementById('sourceSelect').value=d.trigger_source;
 
@@ -487,9 +584,29 @@ function updateStatus(){
     document.getElementById('product-linked-rows').style.display=hasProduct?'block':'none';
     document.getElementById('product-connect-form').style.display=hasProduct?'none':'flex';
     document.getElementById('product-action-row').style.display=hasProduct?'flex':'none';
-    // Secondary playback speaker is only meaningful once the product is reachable.
+    // Auto-expand is only meaningful once the product is reachable.
     document.getElementById('playback-speaker-row').style.display=d.product_connected?'block':'none';
     document.getElementById('playback-speaker-btn').textContent=d.playback_speaker||'None';
+
+    // Leave the field alone while it is being edited, or typing gets reverted
+    // by the next status poll.
+    let an=document.getElementById('adaptorName');
+    if(document.activeElement!==an)an.value=d.adaptor_name||'';
+    savedName=d.adaptor_name||'';
+    refreshNameHighlight();
+    applyAdaptorName(d.adaptor_name||'');
+
+    // A peer adaptor only adds a second Halo page, so it belongs to the Halo
+    // card and is shown with the rest of the linked-Halo rows.
+    renderPeer(d);
+
+    document.getElementById('peer-btn').textContent=
+      d.peer_ip ? ((d.peer_title||d.peer_name||d.peer_ip)+(d.peer_online?'':' (offline)')) : 'None';
+
+    // When another adaptor is driving this one, its Halo is the one showing
+    // this deck — on its second page. Leaving these controls live invites
+    // linking a Halo here that would duplicate what is already on screen.
+    applyDrivenBy(d.driven_by||'');
 
     let hasHalo=d.halo_ip&&d.halo_ip!=='';
     document.getElementById('halo-ip').textContent=hasHalo?d.halo_ip:'—';
@@ -663,6 +780,9 @@ document.getElementById('halo-unlink-btn').addEventListener('click',function(){
 });
 
 let currentDeviceType='';
+// The custom name replaces the deck-type label on the player card, but the
+// page heading always stays "BGAdaptor" — the name is not the product.
+let adaptorNameValue='';
 
 // Title, icon, and standby label per deck type.
 const DECK_INFO={
@@ -670,6 +790,11 @@ const DECK_INFO={
   record:['Beogram','vinyl'],
   tape:  ['Beocord','device-audio-tape']
 };
+
+function updateBgCardTitle(){
+  let info=DECK_INFO[currentDeviceType]||DECK_INFO.cd;
+  document.getElementById('bg-card-title').textContent=adaptorNameValue||info[0];
+}
 
 function applyDeviceType(t){
   currentDeviceType=t;
@@ -692,7 +817,7 @@ function applyDeviceType(t){
   setIcon('bg-stop-icon',tape?'player-stop':'chevron-up');
   document.getElementById('bg-stop').title=tape?'Stop':'Lift tonearm';
   let info=DECK_INFO[t]||DECK_INFO.cd;
-  document.getElementById('bg-card-title').textContent=info[0];
+  updateBgCardTitle();
   setIcon('bg-card-icon',info[1]);
   document.getElementById('bg-standby').title=info[0]+' standby';
 }
@@ -706,7 +831,7 @@ document.getElementById('deviceTypeSeg').addEventListener('click',function(e){
   let wasTape=(currentDeviceType==='tape'),willBeTape=(btn.dataset.type==='tape');
   if(currentDeviceType&&wasTape!==willBeTape){
     let msg=willBeTape
-      ? 'Tape decks use a different Datalink command set. Only select this if a tape deck is connected \u2014 commands sent to a CD player or turntable will not work.'
+      ? 'Tape decks use a different Datalink command set. Only select this if a tape deck is connected.'
       : 'CD players and turntables use a different Datalink command set than tape decks. Only select this if that deck is connected.';
     if(!confirm(msg+'\n\nContinue?'))return;
   }
@@ -724,6 +849,50 @@ document.getElementById('haloPlayIconToggle').addEventListener('change',function
 
 document.getElementById('haloVolumeControlsToggle').addEventListener('change',function(){
   fetch('/update-halovolume?enabled='+this.checked);
+});
+
+// The name also titles this page and the browser tab, so several adaptors
+// open in tabs side by side stay tellable apart.
+// Mirror the rest of the page: the button that performs the pending action is
+// highlighted, so an unsaved edit is obvious.
+let savedName='';
+function refreshNameHighlight(){
+  let dirty=document.getElementById('adaptorName').value!==savedName;
+  document.getElementById('adaptor-name-btn').classList.toggle('btn-highlight',dirty);
+}
+document.getElementById('adaptorName').addEventListener('input',refreshNameHighlight);
+
+function applyDrivenBy(name){
+  let note=document.getElementById('halo-driven-note');
+  let card=document.getElementById('halo-card');
+  let on=!!name;
+  note.textContent=on?('Halo cannot be configured, because '+name+' is already controlling it.'):'';
+  note.style.display=on?'block':'none';
+  card.querySelectorAll('input,select,button').forEach(el=>{el.disabled=on;});
+  card.style.opacity=on?'0.55':'';
+}
+
+function applyAdaptorName(name){
+  document.title=name?('BGAdaptor \u2014 '+name):'BGAdaptor';
+  adaptorNameValue=name||'';
+  updateBgCardTitle();
+}
+
+document.getElementById('adaptor-name-btn').addEventListener('click',function(){
+  let f=document.getElementById('adaptorName'),note=document.getElementById('adaptor-name-note');
+  fetch('/update-name?title='+encodeURIComponent(f.value)).then(r=>r.text()).then(t=>{
+    f.value=t;                       // show what was actually stored after cleaning
+    savedName=t;
+    refreshNameHighlight();
+    applyAdaptorName(t);
+    note.textContent=t?'Saved \u2014 reconnecting to the Halo':'Cleared \u2014 using the deck type';
+    note.style.display='block';
+    setTimeout(()=>{note.style.display='none';},2500);
+  });
+});
+
+document.getElementById('adaptorName').addEventListener('keydown',function(e){
+  if(e.key==='Enter')document.getElementById('adaptor-name-btn').click();
 });
 
 document.getElementById('factory-reset-btn').addEventListener('click',function(){

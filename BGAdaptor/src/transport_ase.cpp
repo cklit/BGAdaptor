@@ -234,10 +234,13 @@ void processSSE(String message) {
             speakerExpanded = false;   // product left the source; any expansion is gone
             expandDueAt = 0;
             playbackState = STOPPED;
+            clearBeogramTrack();
             sendHexCommand(STANDBY);
             if (haloClient.available()) {
-                updateHaloPlayback(false, "");  
-            }                    
+                // A blank string is silently ignored by the Halo — a lone
+                // space is what actually blanks the subtitle (see beogram.cpp).
+                updateHaloPlayback(false, " ");
+            }
             Serial.println("Sent STBY command to Beogram");
         } else {
             JsonObject primaryExperience = data["primaryExperience"];

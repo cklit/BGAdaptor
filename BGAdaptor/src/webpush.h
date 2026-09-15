@@ -9,3 +9,8 @@
 void webpushBegin();
 void webpushLoop();
 void broadcastBeogramState();
+
+// Name of the adaptor currently driving this one, or "" when none is. A peer
+// identifies itself on connect; the value clears when that socket drops, so
+// it is live rather than a stored setting. Browser clients never set it.
+extern String drivenByPeer;

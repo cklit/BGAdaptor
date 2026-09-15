@@ -170,13 +170,23 @@ void processWebSocketMessage(const String& message) {
         }
     } else if (message.indexOf("\"value\":\"networkStandby\"") != -1) {
         playbackState = STOPPED;
+        clearBeogramTrack();
         if (haloClient.available()) {
-            updateHaloPlayback(false, "");
+            // A blank string is silently ignored by the Halo — a lone
+            // space is what actually blanks the subtitle (see beogram.cpp).
+            updateHaloPlayback(false, " ");
         }
         sendHexCommand(STANDBY);
         Serial.println("🛑 Standby command detected on websocket. Sent STBY command to Beogram");
     } else if (lineInActive) {
         if (message.indexOf("\"value\":\"started\"") != -1) {
+            // This is Mozart's own confirmation that our source is actually
+            // playing — it won't join a speaker to the experience before
+            // this, whether the resume was initiated here (Beogram Play,
+            // with no source-change event to trigger the usual expand) or
+            // from the product's own remote. Idempotent, so safe outside the
+            // debounce below, which exists only to avoid resending PLAY.
+            expandToPlaybackSpeaker();
             if (currentTime - lastStartEventTime > stateDebounceDelay) {
                 lastStartEventTime = currentTime;
                 if (playbackState != PLAYING) {

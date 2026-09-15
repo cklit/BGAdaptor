@@ -1,13 +1,38 @@
 #include "webpush.h"
+#include <ArduinoJson.h>
+#include "peer.h"
 
 static WebsocketsServer uiServer;
 static const int MAX_UI_CLIENTS = 4;
 static WebsocketsClient uiClients[MAX_UI_CLIENTS];
+static bool uiClientIsPeer[MAX_UI_CLIENTS] = {false};
+String drivenByPeer;
 
 static String beogramStateJson() {
     String json = "{\"state\":\"" + beogramStateText + "\",";
     json += "\"track\":\"" + beogramTrack + "\",";
-    json += "\"playing\":" + String(beogramPlaying ? "true" : "false") + "}";
+    // The deck type rides along so a peer adaptor learns the layout for its
+    // Halo page from the same message as the state — on connect and on every
+    // change, with no polling and no second request to time out. The browser
+    // page ignores the extra key.
+    json += "\"deck\":\"" + String(deviceType == DEVICE_RECORD ? "record"
+                                   : deviceType == DEVICE_TAPE   ? "tape" : "cd") + "\",";
+    // Sanitised at save time, so it is safe to drop into hand-built JSON.
+    json += "\"title\":\"" + adaptorName + "\",";
+    json += "\"playing\":" + String(beogramPlaying ? "true" : "false");
+    // A linked peer's deck rides along, so the page can show its controls
+    // live rather than waiting for the five-second status poll. A peer's own
+    // browser never sees these keys, because a peer has no peer of its own.
+    if (peerConfigured()) {
+        json += ",\"peer_online\":" + String(peerOnline ? "true" : "false");
+        json += ",\"peer_playing\":" + String(peerPlaying ? "true" : "false");
+        json += ",\"peer_state\":\"" + peerStateText + "\"";
+        json += ",\"peer_track\":\"" + peerTrack + "\"";
+        json += ",\"peer_deck\":\"" + String(peerDeck == DEVICE_RECORD ? "record"
+                                             : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\"";
+        json += ",\"peer_title\":\"" + peerTitle + "\"";
+    }
+    json += "}";
     return json;
 }
 
@@ -21,16 +46,41 @@ void webpushLoop() {
         for (int i = 0; i < MAX_UI_CLIENTS; i++) {
             if (!uiClients[i].available()) {
                 uiClients[i] = uiServer.accept();
+                uiClientIsPeer[i] = false;
                 if (uiClients[i].available()) {
+                    // A browser never sends anything on this socket; another
+                    // adaptor announces itself, which is the only way this one
+                    // learns it is being driven.
+                    uiClients[i].onMessage([i](WebsocketsClient&, WebsocketsMessage m) {
+                        JsonDocument doc;
+                        if (deserializeJson(doc, m.data())) return;
+                        if (String(doc["role"] | "") != "peer") return;
+                        uiClientIsPeer[i] = true;
+                        String name = doc["name"] | "";
+                        drivenByPeer = name.length() ? name : String("another adaptor");
+                        Serial.println("Driven by peer: " + drivenByPeer);
+                    });
                     uiClients[i].send(beogramStateJson());
                 }
                 break;
             }
         }
     }
-    // Service connected clients
+    // Service connected clients, and recompute who is driving us. Doing it
+    // from what is still connected means an adaptor that is powered off or
+    // unlinked clears the flag on its own, with nothing to time out.
+    bool peerStillHere = false;
     for (int i = 0; i < MAX_UI_CLIENTS; i++) {
-        if (uiClients[i].available()) uiClients[i].poll();
+        if (uiClients[i].available()) {
+            uiClients[i].poll();
+            if (uiClientIsPeer[i]) peerStillHere = true;
+        } else {
+            uiClientIsPeer[i] = false;
+        }
+    }
+    if (!peerStillHere && drivenByPeer.length()) {
+        Serial.println("Peer disconnected — no longer driven");
+        drivenByPeer = "";
     }
     // Push on change, flagged from processBuffer
     if (beogramStateDirty) {
