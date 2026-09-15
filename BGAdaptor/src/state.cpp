@@ -38,6 +38,7 @@ bool mqttConnected = false;
 String productIP;
 String productSerial;
 String productName;
+String adaptorName;
 String haloIP;
 String haloSerial;
 String playbackJid;

@@ -6,6 +6,9 @@
 #include "halo.h"
 #include "ha_mqtt.h"
 #include "discovery.h"
+#include "peer.h"
+#include "webpush.h"
+#include <mdns.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
 
@@ -139,6 +142,10 @@ void handleUpdateHalo() {
             haloSerial = "";
             preferences.putString("haloIP", haloIP); // Store the Halo IP in preferences
             preferences.putString("haloSerial", haloSerial);
+            // A peer adaptor exists only to occupy a page on this Halo, so a
+            // link left behind here would be a setting with nothing to do —
+            // and it would keep the secondary's own Halo card disabled.
+            if (peerConfigured()) peerSetLink("", "", "");
             server.send(200, "text/plain", "Unlinked Halo");
             Serial.println("Unlinked Halo."); 
             return;
@@ -475,16 +482,13 @@ void handleUpdateDeviceType() {
                        : (value == "tape")   ? DEVICE_TAPE
                                              : DEVICE_CD;
             preferences.putString("deviceType", value);
-            // The Play-button icon is a turntable-only option and its toggle
-            // is hidden for other decks, so clear it here — otherwise it
-            // would stay set with no way to switch it off.
-            if (deviceType != DEVICE_RECORD && haloPlayIcon) {
-                haloPlayIcon = false;
-                preferences.putBool("haloPlayIcon", false);
-            }
-            // The Halo layout differs between deck types, so push the new
-            // configuration straight away — no restart needed.
-            if (haloClient.available()) sendConfigToHalo();
+            // The Halo layout differs between deck types — and so does the
+            // page title, when no custom name is set. A plain resend does not
+            // retitle, so take the reconnect path.
+            reconnectHalo("deck type changed");
+            // Tell anyone listening on the state socket, including an adaptor
+            // that renders a Halo page for this deck.
+            broadcastBeogramState();
             server.send(200, "text/plain", "OK");
             return;
         }
@@ -504,12 +508,51 @@ void handleUpdateHaloPlayIcon() {
     server.send(400, "text/plain", "Missing value");
 }
 
+// A custom Halo page title. It ends up inside hand-built JSON in both the
+// Halo configuration and the state broadcast, so it is cleaned here, at the
+// single point where it enters the system: quotes, backslashes and control
+// characters out, then truncated. Everything downstream can then treat it as
+// safe without repeating the check.
+static String sanitiseName(const String& in) {
+    String out;
+    for (size_t i = 0; i < in.length() && out.length() < ADAPTOR_NAME_MAX; i++) {
+        char c = in[i];
+        if (c == '"' || c == '\\' || (uint8_t)c < 0x20 || (uint8_t)c == 0x7F) continue;
+        out += c;
+    }
+    out.trim();
+    return out;
+}
+
+void handleUpdateAdaptorName() {
+    if (!server.hasArg("title")) {
+        server.send(400, "text/plain", "Missing value");
+        return;
+    }
+    adaptorName = sanitiseName(server.arg("title"));
+    preferences.putString("adaptorName", adaptorName);
+
+    // A peer adaptor titles its page 2 from the state socket, so tell it.
+    broadcastBeogramState();
+
+    // The TXT record is otherwise only written in setup(), which would leave
+    // other adaptors seeing the old name in a scan until this one rebooted.
+    // Rewriting it in place is enough — the responder announces the change.
+    String fn = adaptorName.length() ? adaptorName
+              : productName.length() ? productName : String(DEVICE_NAME);
+    mdns_service_txt_item_set("_bgadaptor", "_tcp", "fn", fn.c_str());
+
+    reconnectHalo("renamed");   // page 1 is titled from this
+
+    server.send(200, "text/plain", adaptorName);
+}
+
 void handleUpdateHaloVolumeControls() {
     if (server.hasArg("enabled")) {
         haloVolumeControls = (server.arg("enabled") == "true");
         preferences.putBool("haloVolCtrl", haloVolumeControls);
         if (!haloVolumeControls && haloClient.available()) {
-            sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
+            setVolumeRing(100);
         }
         server.send(200, "text/plain", "OK");
         return;
@@ -518,9 +561,9 @@ void handleUpdateHaloVolumeControls() {
 }
 
 
-// Secondary playback speaker sub-page: pick one speaker that joins the product's
-// Beolink experience when the deck starts playing. Reached from the product
-// card; scans via /discover-speakers (which excludes the linked product).
+// Auto-expand sub-page: pick one speaker that joins the product's Beolink
+// experience when the deck starts playing. Reached from the product card;
+// scans via /discover-speakers (which excludes the linked product).
 void handlePlaybackSpeaker() {
     server.send(200, "text/html", String(R"rawliteral(
 <!DOCTYPE html>
@@ -528,7 +571,7 @@ void handlePlaybackSpeaker() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Secondary playback speaker</title>
+<title>Auto-expand</title>
 <style>)rawliteral") + PAGE_ICON_CSS + R"rawliteral(
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#f0f0f0;padding:1.5rem 1rem;color:#111}
@@ -581,13 +624,13 @@ a:hover{text-decoration:underline}
 <div class="page">
   <div class="page-title">
     <svg class="ic"><use href="#i-device-speaker"/></svg>
-    <h1>Secondary playback speaker (optional)</h1>
+    <h1>Auto-expand (optional)</h1>
   </div>
 
   <div class="card">
     <div class="card-header"><svg class="ic"><use href="#i-device-speaker"/></svg><h2>Speaker</h2></div>
     <div class="status-row">
-      <span class="status-label">Selected secondary playback speaker</span>
+      <span class="status-label">Selected speaker</span>
       <span class="chip" id="current">)rawliteral" + (playbackName.length()
         ? playbackName + (playbackSerial.length() ? " - " + playbackSerial : String(""))
         : String("None")) + R"rawliteral(</span>
@@ -607,17 +650,17 @@ a:hover{text-decoration:underline}
 
   <div class="card">
     <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>About this setting</h2></div>
-    <p>Some products are sources only and have no speakers of their own &mdash; for example Beosound Core and Beoconnect Core. Selecting a secondary playback speaker lets the adaptor expand the Beolink experience to a speaker automatically, so the Beogram is audible without starting the expansion by hand each time. </p><p><b>To disable this feature, select "None" from the dropdown and press Save.</b></p>
+    <p>Some products, for example Beosound Core and Beoconnect Core, can be set up as a source without its own speakers. Auto-expand lets the adaptor expand the experience to another speaker automatically when the deck starts playing.</p><br><p><b>To disable this feature, select "None" from the dropdown and press Save.</b></p>
     <h3>What it does</h3>
     <ul>
-      <li>When the deck starts playing, the music will be expanded to the secondary playback speaker.</li>
+      <li>When the deck starts playing, the music will be expanded to the selected speaker.</li>
       <li>When the deck is set to standby, the speaker leaves again.</li>
     </ul>
     <h3>What it does not do</h3>
     <ul>
       <li><strong>Only one speaker.</strong> To play on more speakers, expand from the Bang &amp; Olufsen app or Home Assistant instead.</li>
-      <li><strong>No control from the secondary playback speaker.</strong> Use Beoremote Halo, the <a href="/">BGAdaptor front page</a>, or Home Assistant to control playback.</li>
-      <li><strong>It takes over any ongoing experiences.</strong> If the secondary playback speaker is playing something else, it will be interrupted by the BGAdaptor regardless, once the deck starts.</li>
+      <li><strong>No control from the selected speaker.</strong> Use Beoremote Halo, the <a href="/">BGAdaptor front page</a>, or Home Assistant to control playback.</li>
+      <li><strong>It takes over any ongoing experiences.</strong> If the selected speaker is playing something else, it will be interrupted by the BGAdaptor regardless, once the deck starts.</li>
     </ul>
   </div>
 
@@ -700,9 +743,249 @@ void handleUpdatePlaybackSpeaker() {
     preferences.putString("playbackJid", playbackJid);
     preferences.putString("playbackName", playbackName);
     preferences.putString("playbackSerial", playbackSerial);
-    Serial.println(playbackJid.length() ? "Secondary playback speaker set to " + playbackName
-                                        : "Secondary playback speaker cleared");
+    Serial.println(playbackJid.length() ? "Auto-expand speaker set to " + playbackName
+                                        : "Auto-expand cleared");
     server.send(200, "text/plain", "OK");
+}
+
+// Peer adaptor sub-page: link a second BGAdaptor so its deck gets its own
+// Halo page. Scans via /discover-peers (which excludes this adaptor).
+void handlePeerConfig() {
+    server.send(200, "text/html", String(R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Peer adaptor</title>
+<style>)rawliteral") + PAGE_ICON_CSS + R"rawliteral(
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f0f0f0;padding:1.5rem 1rem;color:#111}
+@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#eee}}
+.page{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:1rem}
+.page-title{display:flex;align-items:center;gap:10px;padding:.25rem 0 .5rem}
+.page-title .ic{font-size:22px;color:#666}
+.page-title h1{font-size:18px;font-weight:500}
+.card{background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem 1.5rem}
+@media(prefers-color-scheme:dark){.card{background:#252525;border-color:#333}}
+.card-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem}
+.card-header .ic{font-size:18px;color:#888}
+.card-header h2{font-size:15px;font-weight:500}
+.status-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem}
+.status-label{font-size:13px;color:#666}
+@media(prefers-color-scheme:dark){.status-label{color:#aaa}}
+.chip{font-size:12px;font-family:monospace;color:#666;background:#f5f5f5;padding:2px 8px;border-radius:4px}
+@media(prefers-color-scheme:dark){.chip{background:#333;color:#bbb}}
+.input-row{display:flex;gap:8px;margin-top:8px}
+.btn{height:36px;padding:0 14px;font-size:13px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#111;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.btn:hover{background:#f5f5f5}
+@media(prefers-color-scheme:dark){.btn{background:#2a2a2a;border-color:#444;color:#eee}.btn:hover{background:#333}}
+.btn.scanning{animation:scanPulse 1.3s ease-in-out infinite}
+@keyframes scanPulse{0%,100%{background:#fff;border-color:#ddd;color:#666}50%{background:#e1f5ee;border-color:#1D9E75;color:#0f6e56}}
+@media(prefers-color-scheme:dark){@keyframes scanPulse{0%,100%{background:#2a2a2a;border-color:#444;color:#aaa}50%{background:#1e3d34;border-color:#1D9E75;color:#7fd9bb}}}
+@media(prefers-reduced-motion:reduce){.btn.scanning{animation:none;border-color:#1D9E75}}
+.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}
+.btn-highlight:hover{background:#178a65}
+@media(prefers-color-scheme:dark){.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}.btn-highlight:hover{background:#178a65}}
+select{width:100%;height:34px;padding:0 10px;font-size:13px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#111}
+@media(prefers-color-scheme:dark){select{background:#1a1a1a;border-color:#444;color:#eee}}
+label{font-size:13px;color:#666;display:block;margin-bottom:6px}
+@media(prefers-color-scheme:dark){label{color:#aaa}}
+p,li{font-size:13px;color:#666;line-height:1.55}
+@media(prefers-color-scheme:dark){p,li{color:#aaa}}
+ul{margin:.5rem 0 0 1.1rem}
+li{margin-bottom:.4rem}
+h3{font-size:13px;font-weight:600;margin:1rem 0 0;color:#111}
+@media(prefers-color-scheme:dark){h3{color:#eee}}
+a{color:#185fa5;text-decoration:none}
+a:hover{text-decoration:underline}
+@media(prefers-color-scheme:dark){a{color:#85b7eb}}
+.info-text{display:none;font-size:12px;color:#888;margin-top:6px}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:.35rem}
+.back-link{display:flex;align-items:center;gap:8px;font-size:13px;color:#185fa5;text-decoration:none}
+.back-link:hover{text-decoration:underline}
+@media(prefers-color-scheme:dark){.back-link{color:#85b7eb}}
+</style>
+</head>
+<body>)rawliteral" + PAGE_SPRITE + R"rawliteral(
+<div class="page">
+  <div class="page-title">
+    <svg class="ic"><use href="#i-server"/></svg>
+    <h1>Peer adaptor (optional)</h1>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><svg class="ic"><use href="#i-server"/></svg><h2>Adaptor</h2></div>
+    <div class="status-row">
+      <span class="status-label">Linked peer adaptor</span>
+      <span class="chip" id="current">)rawliteral" + (peerIP.length()
+        ? (peerName.length() ? peerName + " - " + peerIP : peerIP)
+        : String("None")) + R"rawliteral(</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Name reported by the peer</span>
+      <span class="chip">)rawliteral" + String(!peerIP.length() ? "-"
+        : peerTitle.length() ? peerTitle : String("From deck type")) + R"rawliteral(</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Deck reported by the peer</span>
+      <span class="chip">)rawliteral" + String(!peerIP.length() ? "-"
+        : peerDeck == DEVICE_RECORD ? "Record player"
+        : peerDeck == DEVICE_TAPE   ? "Tape deck" : "CD player") + R"rawliteral(</span>
+    </div>
+    <label for="peer">Choose an adaptor</label>
+    <select id="peer">
+      <option value="">None</option>)rawliteral" + (peerIP.length()
+        ? "<option value=\"" + peerIP + "\" selected>" +
+          (peerTitle.length() ? peerTitle : peerName.length() ? peerName : peerIP) +
+          " (" + peerIP + ")</option>"
+        : String("")) + R"rawliteral(
+    </select>
+    <div class="input-row">
+      <button class="btn" id="scan-btn"><svg class="ic"><use href="#i-radar-2"/></svg>&nbsp;Start adaptor scan</button>
+    </div>
+    <span class="info-text" id="note">Scanning the network &mdash; this takes around 10 seconds&hellip;</span>
+    <div class="input-row">
+      <button class="btn" id="save-btn">Save</button>)rawliteral" + (peerIP.length()
+        ? "<a href=\"http://" + peerIP + "/\" target=\"_blank\" rel=\"noopener\">"
+          "<button class=\"btn\" type=\"button\">Open peer's settings page</button></a>"
+        : String("")) + R"rawliteral(
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>Stop the other deck automatically</h2></div>
+    <p>Turn this setting on to stop the other deck when one starts.</p>
+    <div class="toggle-row">
+      <span class="status-label">Auto-stop</span>
+      <button class="btn" id="autostop-btn">)rawliteral" + String(peerAutoStop ? "On" : "Off") + R"rawliteral(</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>About this setting</h2></div>
+    <p>The peer functionality is an advanced feature that lets you control two BGAdaptors using one Beoremote Halo. In conjunction with the Auto-expand feature, you can make two adaptors act as if they were connected to the same speaker.</p>
+    <p>Prerequisites:</p>
+    <ul>
+        <li>A "primary" BGAdaptor connected to a deck, Bang & Olufsen product and Beoremote Halo.</li>
+        <li>A "secondary" (or peer) BGAdaptor connected to a deck and another Bang & Olufsen product.</li>
+        <li>Both adaptors must be on the same network, since Beolink Multiroom is used to distribute audio.</li>
+        <li>Setup Auto-expand on the peer BGAdaptor. Point to the Bang & Olufsen product the primary BGAdaptor is connected to (given it has speakers connected). Alternatively, setup Auto-expand on both BGAdaptors to point to a third Bang & Olufsen product.
+    </ul><br>
+    <h3>What it does</h3>
+    <ul>
+      <li>Adds a second player controls page on Beoremote Halo, corresponding to the deck connected to the BGAdaptor peer.</li>
+      <li>Shows the peer's real playing state on that page, pushed live as it changes.</li>
+      <li>It stops the other deck when one starts, if the Auto-stop setting is enabled.</li>
+    </ul>
+    <h3>What it does not do</h3>
+    <ul>
+      <li>Starting a deck on the decks physical user interface will not stop the other deck, regardless of setting.</li>
+      <li>If volume control is enabled on the "primary" BGAdaptor, it will not control the volume of the peer deck.</li>
+    </ul>
+  </div>
+
+  <a href="/" class="card back-link">
+    <svg class="ic" style="font-size:16px"><use href="#i-arrow-left"/></svg>
+    Back to main page
+  </a>
+</div>
+
+<script>
+let found={};
+let savedIP=)rawliteral" + String("'") + peerIP + String("'") + R"rawliteral(;
+// Seed from what is already stored, so saving without rescanning keeps the
+// peer's name and id rather than blanking them.
+if(savedIP)found[savedIP]={name:)rawliteral" + String("'") + peerName + String("'") + R"rawliteral(,
+                           id:)rawliteral" + String("'") + peerId + String("'") + R"rawliteral(};
+let autoStop=)rawliteral" + String(peerAutoStop ? "true" : "false") + R"rawliteral(;
+
+function refreshSaveHighlight(){
+  let dirty=document.getElementById('peer').value!==savedIP;
+  document.getElementById('save-btn').classList.toggle('btn-highlight',dirty);
+}
+document.getElementById('peer').addEventListener('change',refreshSaveHighlight);
+
+document.getElementById('scan-btn').addEventListener('click',function(){
+  let btn=this,note=document.getElementById('note');
+  btn.disabled=true;
+  btn.classList.add('scanning');
+  btn.innerHTML='<svg class="ic"><use href="#i-loader-2"/></svg>&nbsp;Scanning\u2026';
+  note.style.display='block';
+  fetch('/discover-peers').then(r=>r.json()).then(d=>{
+    let sel=document.getElementById('peer');
+    sel.innerHTML='<option value="">None</option>';
+    ((d&&d.devices)||[]).forEach(dev=>{
+      if(!dev.ip)return;
+      found[dev.ip]={name:dev.name||'',id:dev.serial||''};
+      let o=document.createElement('option');
+      o.value=dev.ip;
+      o.textContent=(dev.name? dev.name+' ' : '')+'('+dev.ip+')';
+      sel.appendChild(o);
+    });
+    // An offline peer will not answer the scan. Dropping it from the list
+    // would silently turn the stored link into an unsaved "None".
+    if(savedIP&&!sel.querySelector('option[value="'+savedIP+'"]')){
+      let o=document.createElement('option');
+      o.value=savedIP;
+      o.textContent=(found[savedIP]&&found[savedIP].name? found[savedIP].name+' ' : '')
+                    +'('+savedIP+', offline)';
+      sel.appendChild(o);
+    }
+    if(savedIP)sel.value=savedIP;
+    refreshSaveHighlight();
+  }).catch(()=>{})
+  .finally(()=>{
+    btn.disabled=false;
+    btn.classList.remove('scanning');
+    btn.innerHTML='<svg class="ic"><use href="#i-radar-2"/></svg>&nbsp;Start adaptor scan';
+    note.style.display='none';
+  });
+});
+
+document.getElementById('save-btn').addEventListener('click',function(){
+  let ip=document.getElementById('peer').value,d=found[ip]||{name:'',id:''};
+  fetch('/update-peer?ip='+encodeURIComponent(ip)
+        +'&name='+encodeURIComponent(d.name)+'&id='+encodeURIComponent(d.id))
+    .then(()=>{
+      document.getElementById('current').textContent=
+        ip ? (d.name ? d.name+' - '+ip : ip) : 'None';
+      savedIP=ip;
+      let b=document.getElementById('save-btn');
+      b.classList.remove('btn-highlight');
+      b.textContent='Saved';
+      // The deck chip is rendered server-side, so reload to show what the
+      // peer actually reported rather than leaving a stale value on screen.
+      setTimeout(()=>{location.reload();},1200);
+    });
+});
+
+document.getElementById('autostop-btn').addEventListener('click',function(){
+  autoStop=!autoStop;
+  this.textContent=autoStop?'On':'Off';
+  fetch('/update-peer-autostop?enabled='+(autoStop?'true':'false'));
+});
+</script>
+</body>
+</html>
+)rawliteral");
+}
+
+void handleUpdatePeer() {
+    peerSetLink(server.hasArg("ip")   ? server.arg("ip")   : "",
+                server.hasArg("name") ? server.arg("name") : "",
+                server.hasArg("id")   ? server.arg("id")   : "");
+    server.send(200, "text/plain", "OK");
+}
+
+void handleUpdatePeerAutoStop() {
+    if (server.hasArg("enabled")) {
+        peerAutoStop = (server.arg("enabled") == "true");
+        preferences.putBool("peerAutoStop", peerAutoStop);
+        server.send(200, "text/plain", "OK");
+        return;
+    }
+    server.send(400, "text/plain", "Missing value");
 }
 
 void handleStatus() {
@@ -725,7 +1008,17 @@ void handleStatus() {
     jsonResponse += "\"feature_enabled\": " + String(haloControls ? "true" : "false") + ",";
     jsonResponse += "\"halo_play_icon\": " + String(haloPlayIcon ? "true" : "false") + ",";    
     jsonResponse += "\"halo_volume_controls\": " + String(haloVolumeControls ? "true" : "false") + ",";
+    jsonResponse += "\"adaptor_name\":\"" + adaptorName + "\",";
+    jsonResponse += "\"driven_by\":\"" + drivenByPeer + "\",";
     jsonResponse += "\"mqtt_connected\":" + String(mqttConnected ? "true" : "false")+ ",";
+    jsonResponse += "\"peer_ip\":\"" + peerIP + "\",";
+    jsonResponse += "\"peer_name\":\"" + peerName + "\",";
+    jsonResponse += "\"peer_title\":\"" + peerTitle + "\",";
+    jsonResponse += "\"peer_deck\":\"" + String(peerDeck == DEVICE_RECORD ? "record"
+                                                : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\",";
+    jsonResponse += "\"peer_online\":" + String(peerOnline ? "true" : "false") + ",";
+    jsonResponse += "\"peer_playing\":" + String(peerPlaying ? "true" : "false") + ",";
+    jsonResponse += "\"peer_auto_stop\":" + String(peerAutoStop ? "true" : "false") + ",";
     jsonResponse += "\"trigger_source\":\"" + triggerSource + "\"";            
     jsonResponse += "}";
 
@@ -837,6 +1130,10 @@ void registerWebRoutes() {
     server.on("/discover-speakers", HTTP_GET, handleDiscoverSpeakers);
     server.on("/playback-speaker", HTTP_GET, handlePlaybackSpeaker);
     server.on("/update-playback-speaker", HTTP_GET, handleUpdatePlaybackSpeaker);
+    server.on("/discover-peers", HTTP_GET, handleDiscoverPeers);
+    server.on("/peer", HTTP_GET, handlePeerConfig);
+    server.on("/update-peer", HTTP_GET, handleUpdatePeer);
+    server.on("/update-peer-autostop", HTTP_GET, handleUpdatePeerAutoStop);
     
     server.on("/settings/reset-wifi", HTTP_GET, handleResetWifi);
     server.on("/settings/factory-reset", HTTP_GET, handleFactoryReset);
@@ -878,6 +1175,7 @@ void registerWebRoutes() {
     server.on("/update-devicetype", HTTP_GET, handleUpdateDeviceType);
     server.on("/update-haloplayicon", HTTP_GET, handleUpdateHaloPlayIcon);
     server.on("/update-halovolume", HTTP_GET, handleUpdateHaloVolumeControls);
+    server.on("/update-name", HTTP_GET, handleUpdateAdaptorName);
     server.on("/status", handleStatus);
     server.on("/update-ota", HTTP_POST, handleOTAResult, handleOTAUpdate); 
     server.begin();

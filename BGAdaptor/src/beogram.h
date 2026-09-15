@@ -11,3 +11,4 @@ void processBuffer(BeogramFeedback state);
 void handleSerial1Data();
 void sendPlayAfterDelay();
 void checkStoppedTrackTimeout();
+void clearBeogramTrack();

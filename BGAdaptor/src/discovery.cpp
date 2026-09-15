@@ -130,6 +130,22 @@ void handleDiscoverSpeakers() {
     server.send(200, "application/json", out);
 }
 
+// Other BGAdaptors, for the peer page. They announce _bgadaptor._tcp with a
+// friendly name in TXT "fn" and their MAC suffix in TXT "id". buildJid()
+// returns "" for a non-product service, which is correct here — an adaptor
+// has no Beolink JID.
+void handleDiscoverPeers() {
+    JsonDocument doc;
+    JsonArray arr = doc["devices"].to<JsonArray>();
+    String seenIPs = "|" + WiFi.localIP().toString() + "|";   // never list ourselves
+
+    collectService("_bgadaptor", "fn", "id", 0, 0, "bgadaptor", arr, seenIPs);
+
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+}
+
 void handleDiscoverHalo() {
     JsonDocument doc;
     JsonArray arr = doc["devices"].to<JsonArray>();

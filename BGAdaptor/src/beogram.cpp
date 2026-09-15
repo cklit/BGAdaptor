@@ -94,6 +94,18 @@ static void setUiState(const char* state, const char* track, int playing) {
     beogramStateDirty = true;
 }
 
+// The deck goes on reporting the track it stopped on, so once the product
+// drops to standby the number is describing a disc nobody is listening to.
+// Both transports call this from their standby handler, before they refresh
+// the Halo — the Halo subtitle is rebuilt from beogramTrack, so the order
+// matters.
+void clearBeogramTrack() {
+    if (beogramTrack == "-") return;
+    setUiState(nullptr, "-", -1);
+    if (mqtt.isConnected()) bgTrack.setValue("-");
+    Serial.println("Product in standby — cleared track");
+}
+
 // A manual Stop and a natural end-of-disc both report STOPPED_FB, but only
 // a manual stop is followed by a track-echo burst (the deck confirming the
 // track it's paused on). Defer clearing the track until that window has
@@ -214,16 +226,19 @@ void processBuffer(BeogramFeedback state) {
         stoppedPendingClear = false;
         Serial.print("Track identified: ");
         Serial.println(state, DEC);
-        if (haloClient.available()) {
-            char subtitle[20];
-            sprintf(subtitle, "Track %d", state);
-            updateHaloSubtitle(subtitle);
-        }
+        // Store the track before anything renders from it: in icon mode the
+        // Halo subtitle is rebuilt from beogramTrack, so updating the display
+        // first would show the previous track until the next skip.
         char trackNumber[20];
         sprintf(trackNumber, "%d", state);
         setUiState(nullptr, trackNumber, -1);
         if (mqtt.isConnected()) {
             bgTrack.setValue(trackNumber);
+        }
+        if (haloClient.available()) {
+            char subtitle[20];
+            sprintf(subtitle, "Track %d", state);
+            updateHaloSubtitle(subtitle);
         }
     }
 }

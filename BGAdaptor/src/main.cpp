@@ -13,6 +13,7 @@
 #include "webui.h"
 #include "led.h"
 #include "webpush.h"
+#include "peer.h"
 
 WiFiManager wm;
 
@@ -139,6 +140,8 @@ void setup() {
     playbackSerial = preferences.getString("playbackSerial", "");
     haloIP = preferences.getString("haloIP", "");
     haloSerial = preferences.getString("haloSerial", "");
+    // "haloTitle" was the key before this setting became adaptor-wide.
+    adaptorName = preferences.getString("adaptorName", preferences.getString("haloTitle", ""));
     haloControls = preferences.getBool("feature_enabled", false);
     haloPlayIcon = preferences.getBool("haloPlayIcon", false);
     haloVolumeControls = preferences.getBool("haloVolCtrl", true);
@@ -150,6 +153,7 @@ void setup() {
     mqttUser = preferences.getString("mqttUser", "");
     mqttPassword = preferences.getString("mqttPassword", "");
     triggerSource = preferences.getString("triggerSource", platform == PLATFORM_MOZART ? "lineIn" : "LINE IN");    
+    peerLoadPrefs();
 
     // ── Home Assistant / MQTT device ────────────────────────────────
     WiFi.macAddress(mac);
@@ -261,6 +265,16 @@ void setup() {
 
     MDNS.addService("http", "tcp", 80);
 
+    // Announce this adaptor so another one can find it from its peer page.
+    // "id" is the MAC suffix — the stable identity to follow across DHCP
+    // changes, the same role the serial number plays for products.
+    MDNS.addService("bgadaptor", "tcp", 80);
+    MDNS.addServiceTxt("bgadaptor", "tcp", "fn",   adaptorName.length() ? adaptorName
+                                                 : productName.length() ? productName : String(DEVICE_NAME));
+    MDNS.addServiceTxt("bgadaptor", "tcp", "id",   macSuffix);
+    MDNS.addServiceTxt("bgadaptor", "tcp", "deck", storedDeck);
+    MDNS.addServiceTxt("bgadaptor", "tcp", "ver",  FIRMWARE_VERSION);
+
     checkMQTTConnection(true);  // Force immediate connect attempt
 
     if (platform == PLATFORM_ASE && productIP.length() > 0) {
@@ -288,6 +302,7 @@ void loop() {
     checkPendingExpand();
     handleSerial1Data();
     webpushLoop();
+    peerLoop();
     server.handleClient();
     checkWiFiConnection();
     sendPlayAfterDelay();

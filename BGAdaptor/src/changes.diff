@@ -1,0 +1,1060 @@
+--- bg/BGAdaptor/src/config.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/config.h	2026-09-14 14:17:56.142036111 +0000
+@@ -47,6 +47,7 @@
+ static const unsigned long expandDelayMs = 250;
+ static const unsigned long pingTimeout = 10000;
+ static const unsigned long haloActionDelay = 1200;
++static const size_t ADAPTOR_NAME_MAX = 15;   // Halo page titles are truncated on screen beyond this
+ static const unsigned long stateDebounceDelay = 100;
+ static const unsigned long SSE_IDLE_TIMEOUT_MS = 300000;  // ASE: reconnect if stream silent for 5 min
+ #define MDNS_SCAN_TIME_MS 5000   // mDNS discovery: per service type
+--- bg/BGAdaptor/src/state.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/state.h	2026-09-14 14:17:56.141793550 +0000
+@@ -57,6 +57,7 @@
+ extern String productSerial;     // serial number from discovery TXT records; empty for manual IP entry
+ extern String productName;       // friendly name from discovery; empty for manual IP entry
+ extern String haloIP;
++extern String adaptorName;   // user-given name for this adaptor ("" = derive from deck type)
+ extern String haloSerial;      // serial from discovery TXT "serial"; empty for manual IP entry
+ extern String playbackJid;     // Beolink JID of the secondary playback speaker ("" = off)
+ extern String playbackName;    // its friendly name, for the UI
+--- bg/BGAdaptor/src/state.cpp	2026-09-14 11:53:54.153464781 +0000
++++ work/src/state.cpp	2026-09-14 14:17:56.136637543 +0000
+@@ -38,6 +38,7 @@
+ String productIP;
+ String productSerial;
+ String productName;
++String adaptorName;
+ String haloIP;
+ String haloSerial;
+ String playbackJid;
+--- bg/BGAdaptor/src/halo.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/halo.h	2026-09-14 17:41:14.033945161 +0000
+@@ -19,6 +19,10 @@
+ };
+ extern ButtonUpdate pendingUpdate;  // Track pending button updates
+ 
++// Icon shown on a Play button in icon mode: turntable artwork for a record
++// deck, the generic music icon for CD and tape.
++const char* playIconFor(DeviceType dt);
++
+ void sendButtonIconUpdate(const char* buttonID, const char* icon, const char* title = nullptr, const char* subtitle = nullptr);
+ void sendButtonUpdate(const char* buttonID, const char* state = nullptr, const char* title = nullptr, const char* text = nullptr, const char* subtitle = nullptr, int value = -1);
+ void sendPageUpdate(const char* pageID, const char* buttonID);
+@@ -26,6 +30,12 @@
+ void onMessageCallback(WebsocketsMessage message);
+ void secondButtonUpdate();
+ void connectToHalo();
++
++// Apply a change to the page layout — a new page, a different button set, or
++// a new page title. Resending the configuration on the live socket does not
++// reliably retitle a page, so the socket is dropped and reconnected instead;
++// the reconnect handler sends a fresh configuration, which the Halo applies.
++void reconnectHalo(const char* reason);
+ void activateHaloPage();
+ 
+ // Reflect playback state on the Halo. Handles both layouts: the CD
+--- bg/BGAdaptor/src/halo.cpp	2026-09-14 11:53:54.153464781 +0000
++++ work/src/halo.cpp	2026-09-14 18:27:10.020426091 +0000
+@@ -1,6 +1,7 @@
+ #include "halo.h"
+ #include "beogram.h"
+ #include "transport.h"
++#include "peer.h"
+ #include <ArduinoJson.h>
+ 
+ const char* const HALO_PAGE_ID    = "67461a06-74b6-4114-a808-ab90e8abc03f";
+@@ -80,52 +81,112 @@
+     "}";
+ }
+ 
++static const char* deckTitle(DeviceType dt) {
++    return (dt == DEVICE_TAPE)   ? "Beocord"
++         : (dt == DEVICE_RECORD) ? "Beogram"
++                                 : "Beogram CD";
++}
++
++// A page is titled after its deck unless that adaptor has been given a name
++// of its own. Two decks of the same type would otherwise produce two
++// identically titled pages, and the title is the only label a Halo page has.
++// The name is set per adaptor on its own Type card, not here — the secondary
++// never connects to a Halo, so it could not be set from a Halo setting.
++static const char* pageTitle(const String& custom, DeviceType dt) {
++    return custom.length() ? custom.c_str() : deckTitle(dt);
++}
++
++// Build one page of the Halo configuration. Page 1 (the local deck) and
++// page 2 (a peer adaptor's deck) differ only in their ids and title, so both
++// are assembled here.
++//
++// Record players get a dedicated Stop button; CD players use a single button
++// that toggles, since their reported state is trustworthy. A turntable never
++// reports a lifted tonearm and a tape deck's stop is a distinct action —
++// both get a dedicated second button.
++//
++// Turntable only: the Play button can show Halo's turntable icon, with the
++// action in the title and the playback state in the subtitle.
++// Icon shown on the Play button when icon mode is on. A turntable gets the
++// dedicated artwork; a CD or tape deck has no equivalent, so both use the
++// generic music icon.
++const char* playIconFor(DeviceType dt) {
++    return (dt == DEVICE_RECORD) ? "turntable" : "music";
++}
++
++static String haloPageJson(const char* pageId, const char* title, DeviceType dt,
++                           bool playIcon,
++                           const char* bPrev, const char* bPlay, const char* bStop,
++                           const char* bNext, const char* bStandby) {
++    const char* prevLabel = (dt == DEVICE_RECORD) ? "<"
++                          : (dt == DEVICE_TAPE)   ? "<<" : "I<";
++    const char* nextLabel = (dt == DEVICE_RECORD) ? ">"
++                          : (dt == DEVICE_TAPE)   ? ">>" : ">I";
++    bool icon = playIcon;
++
++    String buttons = haloButton(bPrev, prevLabel) + "," +
++                     (icon ? haloIconButton(bPlay, playIconFor(dt), "PLAY", "Stopped")
++                           : haloButton(bPlay, "Play")) + ",";
++    if (dt != DEVICE_CD) buttons += haloButton(bStop, "II") + ",";
++    buttons += haloButton(bNext, nextLabel);
++    if (dt == DEVICE_RECORD) {
++        buttons += "," + (icon
++            ? haloIconButton(bStandby, "sleep", "", "")
++            : haloButton(bStandby, "Stby"));
++    }
++
++    return String("{") +
++        "\"title\": \"" + title + "\"," +
++        "\"id\": \"" + pageId + "\"," +
++        "\"buttons\": [" + buttons + "]" +
++    "}";
++}
++
++// The Halo decides whether a configuration is new from the version string.
++// Deriving it from the configuration's own content means any change — a page
++// added, a button set changed, a page retitled — produces a different
++// version, while an unchanged configuration keeps the same one across
++// reconnects. Versioning by page count alone silently ignored renames.
++static uint32_t configHash(const String& s) {
++    uint32_t h = 2166136261u;                 // FNV-1a
++    for (size_t i = 0; i < s.length(); i++) {
++        h ^= (uint8_t)s[i];
++        h *= 16777619u;
++    }
++    return h;
++}
++
+ void sendConfigToHalo() {
+-    // Record players get a dedicated Stop button; CD players use a single
+-    // button that toggles, since their reported state is trustworthy.
+-    const char* pageTitle = (deviceType == DEVICE_TAPE)   ? "Beocord"
+-                          : (deviceType == DEVICE_RECORD) ? "Beogram"
+-                                                          : "Beogram CD";    
+-    const char* prevLabel = (deviceType == DEVICE_RECORD) ? "<"
+-                          : (deviceType == DEVICE_TAPE) ? "<<" : "I<";
+-    const char* nextLabel = (deviceType == DEVICE_RECORD) ? ">"
+-                          : (deviceType == DEVICE_TAPE) ? ">>" : ">I";
+-
+-    // Turntable only: the Play button can show Halo's turntable icon, with
+-    // the action in the title and the playback state in the subtitle.
+-    bool playIcon = (deviceType == DEVICE_RECORD && haloPlayIcon);
+-
+-    String buttons = haloButton(HALO_BTN_PREV, prevLabel) + "," +
+-                     (playIcon ? haloIconButton(HALO_BTN_PLAY, "turntable", "PLAY", "Stopped")
+-                               : haloButton(HALO_BTN_PLAY, "Play")) + ",";
+-    // CD trusts its own reported state, so one toggling button is enough.
+-    // A turntable never reports a lifted tonearm and a tape deck's stop is
+-    // a distinct action — both get a dedicated second button.
+-    if (deviceType == DEVICE_RECORD) buttons += haloButton(HALO_BTN_STOP, "II") + ",";
+-    if (deviceType == DEVICE_TAPE)   buttons += haloButton(HALO_BTN_STOP, "Stop") + ",";
+-    buttons += haloButton(HALO_BTN_NEXT, nextLabel);
+-    if (deviceType == DEVICE_RECORD) {
+-        buttons += "," + (playIcon
+-            ? haloIconButton(HALO_BTN_STANDBY, "sleep", "", "")
+-            : haloButton(HALO_BTN_STANDBY, "Stby"));
++    String pages = haloPageJson(HALO_PAGE_ID, pageTitle(adaptorName, deviceType), deviceType,
++                                haloPlayIcon,
++                                HALO_BTN_PREV, HALO_BTN_PLAY, HALO_BTN_STOP,
++                                HALO_BTN_NEXT, HALO_BTN_STANDBY);
++
++    // A linked peer adaptor gets a second page. It is built from the cached
++    // deck type, so the page still appears while the peer is unreachable —
++    // its buttons just report Offline until it comes back. The title follows
++    // the deck the same way page 1 does, rather than the peer's own name.
++    if (peerConfigured()) {
++        pages += "," + haloPageJson(HALO_PAGE2_ID, pageTitle(peerTitle, peerDeck),
++                                    peerDeck, haloPlayIcon,
++                                    HALO_P2_PREV, HALO_P2_PLAY, HALO_P2_STOP,
++                                    HALO_P2_NEXT, HALO_P2_STANDBY);
+     }
+ 
++    String version = String("1.") + (peerConfigured() ? "1." : "0.") +
++                     String(configHash(pages) % 100000UL);
++
+     String jsonMessage = String("{") +
+         "\"configuration\": {" +
+-            "\"version\": \"1.0.1\"," +
++            "\"version\": \"" + version + "\"," +
+             "\"id\": \"ae32d6dd-3300-4725-a6a0-2df6b5f8326f\"," +
+-            "\"pages\": [" +
+-                "{" +
+-                    "\"title\": \"" + String(pageTitle) + "\"," +
+-                    "\"id\": \"" + HALO_PAGE_ID + "\"," +
+-                    "\"buttons\": [" + buttons + "]" +
+-                "}" +
+-            "]" +
++            "\"pages\": [" + pages + "]" +
+         "}" +
+     "}";
+ 
+     haloClient.send(jsonMessage);
+-    Serial.println("📡 Sent configuration update to Halo");
++    Serial.println("📡 Sent configuration to Halo, version " + version);
++    if (debugSerial) Serial.println(jsonMessage);
+ 
+     if (platform == PLATFORM_MOZART) {
+         // Mozart exposes playback state over REST — poll it to sync the Halo button
+@@ -134,28 +195,29 @@
+         // ASE has no equivalent poll — derive the button state from lineInActive
+         haloUpdate = STATE;
+     }
++    peerPushHaloState();
+ }
+ 
+ // Reflect playback state on the Halo.
+-//  CD:     one button, its label toggles between Play and Stop.
+-//  Record: two buttons with fixed labels; only the status title changes,
+-//          because a lifted tonearm is never reported and a toggling
+-//          label would end up lying about what the button does.
++//  CD:            one button, its label toggles between Play and Stop.
++//  Record / tape: two buttons with fixed labels; only the status title
++//                 changes, because a lifted tonearm or a pressed pause is
++//                 never reported and a toggling label would end up lying
++//                 about what the button does.
+ void updateHaloPlayback(bool playing, const char* subtitle) {
+     const char* title = playing ? "Playing" : "Stopped";
+-    if (deviceType == DEVICE_RECORD && haloPlayIcon) {
+-        // Icon mode: the button shows a turntable, so the label moves to
+-        // the title and the state is reported in the subtitle instead.
+-        sendButtonIconUpdate(HALO_BTN_PLAY, "turntable", "PLAY", title);
+-        sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "II", nullptr);
++    if (haloPlayIcon) {
++        // Icon mode: the button shows artwork, so the label moves to the
++        // title and the state is reported in the subtitle instead.
++        sendButtonIconUpdate(HALO_BTN_PLAY, playIconFor(deviceType), "PLAY", title);
++        if (deviceType != DEVICE_CD) sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "II", nullptr);
+         return;
+     }
+     if (deviceType != DEVICE_CD) {
+         // Only the Play button carries the status title; the second button
+         // keeps an empty one so the state is stated once, not twice.
+         sendButtonUpdate(HALO_BTN_PLAY, nullptr, title, "Play", subtitle);
+-        sendButtonUpdate(HALO_BTN_STOP, nullptr, "",
+-                         (deviceType == DEVICE_TAPE) ? "Stop" : "II",
++        sendButtonUpdate(HALO_BTN_STOP, nullptr, "", "II",
+                  deviceType == DEVICE_TAPE ? subtitle : nullptr);
+     } else {
+         sendButtonUpdate(HALO_BTN_PLAY, nullptr, title, playing ? "Stop" : "Play", subtitle);
+@@ -164,8 +226,8 @@
+ 
+ void updateHaloSubtitle(const char* subtitle) {
+     // In icon mode the Play subtitle carries the playback state, so leave
+-    // it alone here (a turntable reports no track info anyway).
+-    if (!(deviceType == DEVICE_RECORD && haloPlayIcon)) {
++    // it alone here.
++    if (!haloPlayIcon) {
+         sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, subtitle);
+     }
+     if (deviceType == DEVICE_TAPE) {
+@@ -173,16 +235,25 @@
+     }
+ }
+ 
++// The ring is drawn on the Play button of every page, so both stay in step
++// with the product's actual volume rather than only the page in front.
++static void setVolumeRing(int percent) {
++    sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, percent);
++    if (peerConfigured()) {
++        sendButtonUpdate(HALO_P2_PLAY, nullptr, nullptr, nullptr, nullptr, percent);
++    }
++}
++
+ void updateHaloVolume(int level, int minimum, int maximum) {
+     if (!haloClient.available()) return;
+     if (!haloVolumeControls) {
+-        sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
++        setVolumeRing(100);
+         return;
+     }
+     if (maximum <= minimum) return;
+     int percent = ((level - minimum) * 100 + (maximum - minimum) / 2) / (maximum - minimum);
+     percent = constrain(percent, 0, 100);
+-    sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, percent);
++    setVolumeRing(percent);
+ }
+ 
+ void resetHaloVolumeWhenProductDisconnected() {
+@@ -192,7 +263,7 @@
+         return;
+     }
+     if (!haloClient.available() || resetSent) return;
+-    sendButtonUpdate(HALO_BTN_PLAY, nullptr, nullptr, nullptr, nullptr, 100);
++    setVolumeRing(100);
+     resetSent = true;
+ }
+ 
+@@ -208,8 +279,12 @@
+     }
+ 
+     JsonObject event = doc["event"];
++    // Page 2's Play button carries the same ring. The wheel adjusts this
++    // adaptor's own product either way — that is the one with the speakers,
++    // whichever deck is feeding it.
++    bool wheelOnPlay = (event["id"] == HALO_BTN_PLAY || event["id"] == HALO_P2_PLAY);
+     if (haloControls && haloVolumeControls && event["type"] == "wheel" &&
+-        event["id"] == HALO_BTN_PLAY && event["counts"].is<int>()) {
++        wheelOnPlay && event["counts"].is<int>()) {
+         int counts = event["counts"].as<int>();
+         if (counts == 1 || counts == -1) {
+             Serial.println(counts > 0 ? "Halo volume up" : "Halo volume down");
+@@ -227,11 +302,17 @@
+         String buttonID = doc["event"]["id"].as<String>();
+         Serial.print("Halo button pressed: ");
+ 
+-        if (buttonID == HALO_BTN_PLAY) {
++        if (peerIsButton(buttonID)) {
++            // Page 2 belongs to a peer adaptor — routed, never handled here.
++            Serial.println("PEER");
++            peerHandleButton(buttonID);
++        } else if (buttonID == HALO_BTN_PLAY) {
+             // Turntables and tape decks have their own Stop button, so Play
+             // is always Play there.
+             if (deviceType != DEVICE_CD || playbackState != PLAYING) {
+               Serial.println("PLAY");
++              // Newest interaction wins: both decks feed the same speakers.
++              if (peerAutoStop && peerPlaying) peerSendCommand("stop");
+               sendHexCommand(PLAY);
+             } else {
+               Serial.println("STOP");
+@@ -267,6 +348,9 @@
+         String systemState = doc["event"]["state"].as<String>();
+         if (systemState == "active") {
+             haloAwake = true;
++            // Button updates are suppressed while asleep, so page 2 would
++            // otherwise still show whatever it held before standby.
++            peerMarkHaloDirty();
+             if (haloControls && lineInActive) {
+                 haloActionTime = millis();  // Store the current time
+                 haloUpdate = PAGE;
+@@ -304,6 +388,14 @@
+     }
+ }
+ 
++void reconnectHalo(const char* reason) {
++    if (haloIP.length() == 0 || !haloClient.available()) return;
++    haloClient.close();
++    // Retry on the next loop rather than waiting out the reconnect interval.
++    haloLastReconnectAttempt = 0;
++    Serial.println(String("Halo layout changed (") + reason + ") — reconnecting");
++}
++
+ void activateHaloPage() {
+     if (haloClient.available() && haloUpdate == PAGE && (millis() - haloActionTime >= haloActionDelay)) {
+         haloUpdate = NONE;  
+--- bg/BGAdaptor/src/main.cpp	2026-09-14 11:53:54.153464781 +0000
++++ work/src/main.cpp	2026-09-14 14:17:56.142939288 +0000
+@@ -13,6 +13,7 @@
+ #include "webui.h"
+ #include "led.h"
+ #include "webpush.h"
++#include "peer.h"
+ 
+ WiFiManager wm;
+ 
+@@ -139,6 +140,8 @@
+     playbackSerial = preferences.getString("playbackSerial", "");
+     haloIP = preferences.getString("haloIP", "");
+     haloSerial = preferences.getString("haloSerial", "");
++    // "haloTitle" was the key before this setting became adaptor-wide.
++    adaptorName = preferences.getString("adaptorName", preferences.getString("haloTitle", ""));
+     haloControls = preferences.getBool("feature_enabled", false);
+     haloPlayIcon = preferences.getBool("haloPlayIcon", false);
+     haloVolumeControls = preferences.getBool("haloVolCtrl", true);
+@@ -150,6 +153,7 @@
+     mqttUser = preferences.getString("mqttUser", "");
+     mqttPassword = preferences.getString("mqttPassword", "");
+     triggerSource = preferences.getString("triggerSource", platform == PLATFORM_MOZART ? "lineIn" : "LINE IN");    
++    peerLoadPrefs();
+ 
+     // ── Home Assistant / MQTT device ────────────────────────────────
+     WiFi.macAddress(mac);
+@@ -261,6 +265,16 @@
+ 
+     MDNS.addService("http", "tcp", 80);
+ 
++    // Announce this adaptor so another one can find it from its peer page.
++    // "id" is the MAC suffix — the stable identity to follow across DHCP
++    // changes, the same role the serial number plays for products.
++    MDNS.addService("bgadaptor", "tcp", 80);
++    MDNS.addServiceTxt("bgadaptor", "tcp", "fn",   adaptorName.length() ? adaptorName
++                                                 : productName.length() ? productName : String(DEVICE_NAME));
++    MDNS.addServiceTxt("bgadaptor", "tcp", "id",   macSuffix);
++    MDNS.addServiceTxt("bgadaptor", "tcp", "deck", storedDeck);
++    MDNS.addServiceTxt("bgadaptor", "tcp", "ver",  FIRMWARE_VERSION);
++
+     checkMQTTConnection(true);  // Force immediate connect attempt
+ 
+     if (platform == PLATFORM_ASE && productIP.length() > 0) {
+@@ -288,6 +302,7 @@
+     checkPendingExpand();
+     handleSerial1Data();
+     webpushLoop();
++    peerLoop();
+     server.handleClient();
+     checkWiFiConnection();
+     sendPlayAfterDelay();
+--- bg/BGAdaptor/src/discovery.cpp	2026-09-14 11:53:54.153464781 +0000
++++ work/src/discovery.cpp	2026-09-14 12:10:51.258724627 +0000
+@@ -130,6 +130,22 @@
+     server.send(200, "application/json", out);
+ }
+ 
++// Other BGAdaptors, for the peer page. They announce _bgadaptor._tcp with a
++// friendly name in TXT "fn" and their MAC suffix in TXT "id". buildJid()
++// returns "" for a non-product service, which is correct here — an adaptor
++// has no Beolink JID.
++void handleDiscoverPeers() {
++    JsonDocument doc;
++    JsonArray arr = doc["devices"].to<JsonArray>();
++    String seenIPs = "|" + WiFi.localIP().toString() + "|";   // never list ourselves
++
++    collectService("_bgadaptor", "fn", "id", 0, 0, "bgadaptor", arr, seenIPs);
++
++    String out;
++    serializeJson(doc, out);
++    server.send(200, "application/json", out);
++}
++
+ void handleDiscoverHalo() {
+     JsonDocument doc;
+     JsonArray arr = doc["devices"].to<JsonArray>();
+--- bg/BGAdaptor/src/discovery.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/discovery.h	2026-09-14 12:10:51.258624414 +0000
+@@ -11,4 +11,5 @@
+ void handleDiscover();
+ void handleDiscoverHalo();
+ void handleDiscoverSpeakers();
++void handleDiscoverPeers();
+ void checkProductRecovery();
+--- bg/BGAdaptor/src/webui.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/webui.h	2026-09-14 14:17:56.140944184 +0000
+@@ -21,8 +21,12 @@
+ void handleUpdateDeviceType();
+ void handleUpdateHaloPlayIcon();
+ void handleUpdateHaloVolumeControls();
++void handleUpdateAdaptorName();
+ void handlePlaybackSpeaker();
+ void handleUpdatePlaybackSpeaker();
++void handlePeerConfig();
++void handleUpdatePeer();
++void handleUpdatePeerAutoStop();
+ void handleStatus();
+ void handleResetWifi();
+ void handleFactoryReset();
+--- bg/BGAdaptor/src/webui.cpp	2026-09-14 11:53:54.153464781 +0000
++++ work/src/webui.cpp	2026-09-14 19:34:58.049352002 +0000
+@@ -6,6 +6,9 @@
+ #include "halo.h"
+ #include "ha_mqtt.h"
+ #include "discovery.h"
++#include "peer.h"
++#include "webpush.h"
++#include <mdns.h>
+ #include <WiFi.h>
+ #include <WiFiManager.h>
+ 
+@@ -139,6 +142,10 @@
+             haloSerial = "";
+             preferences.putString("haloIP", haloIP); // Store the Halo IP in preferences
+             preferences.putString("haloSerial", haloSerial);
++            // A peer adaptor exists only to occupy a page on this Halo, so a
++            // link left behind here would be a setting with nothing to do —
++            // and it would keep the secondary's own Halo card disabled.
++            if (peerConfigured()) peerSetLink("", "", "");
+             server.send(200, "text/plain", "Unlinked Halo");
+             Serial.println("Unlinked Halo."); 
+             return;
+@@ -482,9 +489,13 @@
+                 haloPlayIcon = false;
+                 preferences.putBool("haloPlayIcon", false);
+             }
+-            // The Halo layout differs between deck types, so push the new
+-            // configuration straight away — no restart needed.
+-            if (haloClient.available()) sendConfigToHalo();
++            // The Halo layout differs between deck types — and so does the
++            // page title, when no custom name is set. A plain resend does not
++            // retitle, so take the reconnect path.
++            reconnectHalo("deck type changed");
++            // Tell anyone listening on the state socket, including an adaptor
++            // that renders a Halo page for this deck.
++            broadcastBeogramState();
+             server.send(200, "text/plain", "OK");
+             return;
+         }
+@@ -504,6 +515,45 @@
+     server.send(400, "text/plain", "Missing value");
+ }
+ 
++// A custom Halo page title. It ends up inside hand-built JSON in both the
++// Halo configuration and the state broadcast, so it is cleaned here, at the
++// single point where it enters the system: quotes, backslashes and control
++// characters out, then truncated. Everything downstream can then treat it as
++// safe without repeating the check.
++static String sanitiseName(const String& in) {
++    String out;
++    for (size_t i = 0; i < in.length() && out.length() < ADAPTOR_NAME_MAX; i++) {
++        char c = in[i];
++        if (c == '"' || c == '\\' || (uint8_t)c < 0x20 || (uint8_t)c == 0x7F) continue;
++        out += c;
++    }
++    out.trim();
++    return out;
++}
++
++void handleUpdateAdaptorName() {
++    if (!server.hasArg("title")) {
++        server.send(400, "text/plain", "Missing value");
++        return;
++    }
++    adaptorName = sanitiseName(server.arg("title"));
++    preferences.putString("adaptorName", adaptorName);
++
++    // A peer adaptor titles its page 2 from the state socket, so tell it.
++    broadcastBeogramState();
++
++    // The TXT record is otherwise only written in setup(), which would leave
++    // other adaptors seeing the old name in a scan until this one rebooted.
++    // Rewriting it in place is enough — the responder announces the change.
++    String fn = adaptorName.length() ? adaptorName
++              : productName.length() ? productName : String(DEVICE_NAME);
++    mdns_service_txt_item_set("_bgadaptor", "_tcp", "fn", fn.c_str());
++
++    reconnectHalo("renamed");   // page 1 is titled from this
++
++    server.send(200, "text/plain", adaptorName);
++}
++
+ void handleUpdateHaloVolumeControls() {
+     if (server.hasArg("enabled")) {
+         haloVolumeControls = (server.arg("enabled") == "true");
+@@ -705,6 +755,237 @@
+     server.send(200, "text/plain", "OK");
+ }
+ 
++// Peer adaptor sub-page: link a second BGAdaptor so its deck gets its own
++// Halo page. Scans via /discover-peers (which excludes this adaptor).
++void handlePeerConfig() {
++    server.send(200, "text/html", String(R"rawliteral(
++<!DOCTYPE html>
++<html lang="en">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1.0">
++<title>Peer adaptor</title>
++<style>)rawliteral") + PAGE_ICON_CSS + R"rawliteral(
++*{box-sizing:border-box;margin:0;padding:0}
++body{font-family:system-ui,sans-serif;background:#f0f0f0;padding:1.5rem 1rem;color:#111}
++@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#eee}}
++.page{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:1rem}
++.page-title{display:flex;align-items:center;gap:10px;padding:.25rem 0 .5rem}
++.page-title .ic{font-size:22px;color:#666}
++.page-title h1{font-size:18px;font-weight:500}
++.card{background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem 1.5rem}
++@media(prefers-color-scheme:dark){.card{background:#252525;border-color:#333}}
++.card-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem}
++.card-header .ic{font-size:18px;color:#888}
++.card-header h2{font-size:15px;font-weight:500}
++.status-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem}
++.status-label{font-size:13px;color:#666}
++@media(prefers-color-scheme:dark){.status-label{color:#aaa}}
++.chip{font-size:12px;font-family:monospace;color:#666;background:#f5f5f5;padding:2px 8px;border-radius:4px}
++@media(prefers-color-scheme:dark){.chip{background:#333;color:#bbb}}
++.input-row{display:flex;gap:8px;margin-top:8px}
++.btn{height:36px;padding:0 14px;font-size:13px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#111;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;line-height:1}
++.btn:hover{background:#f5f5f5}
++@media(prefers-color-scheme:dark){.btn{background:#2a2a2a;border-color:#444;color:#eee}.btn:hover{background:#333}}
++.btn.scanning{animation:scanPulse 1.3s ease-in-out infinite}
++@keyframes scanPulse{0%,100%{background:#fff;border-color:#ddd;color:#666}50%{background:#e1f5ee;border-color:#1D9E75;color:#0f6e56}}
++@media(prefers-color-scheme:dark){@keyframes scanPulse{0%,100%{background:#2a2a2a;border-color:#444;color:#aaa}50%{background:#1e3d34;border-color:#1D9E75;color:#7fd9bb}}}
++@media(prefers-reduced-motion:reduce){.btn.scanning{animation:none;border-color:#1D9E75}}
++.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}
++.btn-highlight:hover{background:#178a65}
++@media(prefers-color-scheme:dark){.btn-highlight{background:#1D9E75;border-color:#1D9E75;color:#fff}.btn-highlight:hover{background:#178a65}}
++select{width:100%;height:34px;padding:0 10px;font-size:13px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#111}
++@media(prefers-color-scheme:dark){select{background:#1a1a1a;border-color:#444;color:#eee}}
++label{font-size:13px;color:#666;display:block;margin-bottom:6px}
++@media(prefers-color-scheme:dark){label{color:#aaa}}
++p,li{font-size:13px;color:#666;line-height:1.55}
++@media(prefers-color-scheme:dark){p,li{color:#aaa}}
++ul{margin:.5rem 0 0 1.1rem}
++li{margin-bottom:.4rem}
++h3{font-size:13px;font-weight:600;margin:1rem 0 0;color:#111}
++@media(prefers-color-scheme:dark){h3{color:#eee}}
++a{color:#185fa5;text-decoration:none}
++a:hover{text-decoration:underline}
++@media(prefers-color-scheme:dark){a{color:#85b7eb}}
++.info-text{display:none;font-size:12px;color:#888;margin-top:6px}
++.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:.35rem}
++.back-link{display:flex;align-items:center;gap:8px;font-size:13px;color:#185fa5;text-decoration:none}
++.back-link:hover{text-decoration:underline}
++@media(prefers-color-scheme:dark){.back-link{color:#85b7eb}}
++</style>
++</head>
++<body>)rawliteral" + PAGE_SPRITE + R"rawliteral(
++<div class="page">
++  <div class="page-title">
++    <svg class="ic"><use href="#i-server"/></svg>
++    <h1>Peer adaptor (optional)</h1>
++  </div>
++
++  <div class="card">
++    <div class="card-header"><svg class="ic"><use href="#i-server"/></svg><h2>Adaptor</h2></div>
++    <div class="status-row">
++      <span class="status-label">Linked peer adaptor</span>
++      <span class="chip" id="current">)rawliteral" + (peerIP.length()
++        ? (peerName.length() ? peerName + " - " + peerIP : peerIP)
++        : String("None")) + R"rawliteral(</span>
++    </div>
++    <div class="status-row">
++      <span class="status-label">Name reported by the peer</span>
++      <span class="chip">)rawliteral" + String(!peerIP.length() ? "-"
++        : peerTitle.length() ? peerTitle : String("From deck type")) + R"rawliteral(</span>
++    </div>
++    <div class="status-row">
++      <span class="status-label">Deck reported by the peer</span>
++      <span class="chip">)rawliteral" + String(!peerIP.length() ? "-"
++        : peerDeck == DEVICE_RECORD ? "Record player"
++        : peerDeck == DEVICE_TAPE   ? "Tape deck" : "CD player") + R"rawliteral(</span>
++    </div>
++    <label for="peer">Choose an adaptor</label>
++    <select id="peer">
++      <option value="">None</option>)rawliteral" + (peerIP.length()
++        ? "<option value=\"" + peerIP + "\" selected>" +
++          (peerTitle.length() ? peerTitle : peerName.length() ? peerName : peerIP) +
++          " (" + peerIP + ")</option>"
++        : String("")) + R"rawliteral(
++    </select>
++    <div class="input-row">
++      <button class="btn" id="scan-btn"><svg class="ic"><use href="#i-radar-2"/></svg>&nbsp;Start adaptor scan</button>
++    </div>
++    <span class="info-text" id="note">Scanning the network &mdash; this takes around 10 seconds&hellip;</span>
++    <div class="input-row">
++      <button class="btn" id="save-btn">Save</button>
++    </div>
++  </div>
++
++  <div class="card">
++    <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>Stop the other deck automatically</h2></div>
++    <p>Both decks end up on the same speakers, and only this adaptor knows about both. With this on, starting one deck stops the other &mdash; newest interaction wins.</p>
++    <div class="toggle-row">
++      <span class="status-label">Stop the other deck when one starts</span>
++      <button class="btn" id="autostop-btn">)rawliteral" + String(peerAutoStop ? "On" : "Off") + R"rawliteral(</button>
++    </div>
++  </div>
++
++  <div class="card">
++    <div class="card-header"><svg class="ic"><use href="#i-circle-check"/></svg><h2>About this setting</h2></div>
++    <p>A Beoremote Halo can only be linked to one adaptor. Linking a peer here adds a second Halo page that controls the peer's deck, so one Halo reaches both. <b>Only set this on the adaptor the Halo is linked to.</b></p>
++    <h3>What it does</h3>
++    <ul>
++      <li>Adds a second Halo page, laid out for whichever deck the peer reports.</li>
++      <li>Sends button presses to the peer over its normal command interface &mdash; the peer needs no configuration of its own.</li>
++      <li>Shows the peer's real playing state on that page, pushed live as it changes.</li>
++    </ul>
++    <h3>What it does not do</h3>
++    <ul>
++      <li><strong>No volume wheel on page 2.</strong> The wheel adjusts the product this adaptor is linked to, which is not the peer's.</li>
++      <li><strong>Front-panel operation is not arbitrated.</strong> Starting a deck by hand at the deck itself will not stop the other one.</li>
++      <li><strong>The peer's deck type is read when the connection is established.</strong> Change it on the peer and this page catches up on the next reconnect.</li>
++    </ul>
++  </div>
++
++  <a href="/" class="card back-link">
++    <svg class="ic" style="font-size:16px"><use href="#i-arrow-left"/></svg>
++    Back to main page
++  </a>
++</div>
++
++<script>
++let found={};
++let savedIP=)rawliteral" + String("'") + peerIP + String("'") + R"rawliteral(;
++// Seed from what is already stored, so saving without rescanning keeps the
++// peer's name and id rather than blanking them.
++if(savedIP)found[savedIP]={name:)rawliteral" + String("'") + peerName + String("'") + R"rawliteral(,
++                           id:)rawliteral" + String("'") + peerId + String("'") + R"rawliteral(};
++let autoStop=)rawliteral" + String(peerAutoStop ? "true" : "false") + R"rawliteral(;
++
++function refreshSaveHighlight(){
++  let dirty=document.getElementById('peer').value!==savedIP;
++  document.getElementById('save-btn').classList.toggle('btn-highlight',dirty);
++}
++document.getElementById('peer').addEventListener('change',refreshSaveHighlight);
++
++document.getElementById('scan-btn').addEventListener('click',function(){
++  let btn=this,note=document.getElementById('note');
++  btn.disabled=true;
++  btn.classList.add('scanning');
++  btn.innerHTML='<svg class="ic"><use href="#i-loader-2"/></svg>&nbsp;Scanning\u2026';
++  note.style.display='block';
++  fetch('/discover-peers').then(r=>r.json()).then(d=>{
++    let sel=document.getElementById('peer');
++    sel.innerHTML='<option value="">None</option>';
++    ((d&&d.devices)||[]).forEach(dev=>{
++      if(!dev.ip)return;
++      found[dev.ip]={name:dev.name||'',id:dev.serial||''};
++      let o=document.createElement('option');
++      o.value=dev.ip;
++      o.textContent=(dev.name? dev.name+' ' : '')+'('+dev.ip+')';
++      sel.appendChild(o);
++    });
++    // An offline peer will not answer the scan. Dropping it from the list
++    // would silently turn the stored link into an unsaved "None".
++    if(savedIP&&!sel.querySelector('option[value="'+savedIP+'"]')){
++      let o=document.createElement('option');
++      o.value=savedIP;
++      o.textContent=(found[savedIP]&&found[savedIP].name? found[savedIP].name+' ' : '')
++                    +'('+savedIP+', offline)';
++      sel.appendChild(o);
++    }
++    if(savedIP)sel.value=savedIP;
++    refreshSaveHighlight();
++  }).catch(()=>{})
++  .finally(()=>{
++    btn.disabled=false;
++    btn.classList.remove('scanning');
++    btn.innerHTML='<svg class="ic"><use href="#i-radar-2"/></svg>&nbsp;Start adaptor scan';
++    note.style.display='none';
++  });
++});
++
++document.getElementById('save-btn').addEventListener('click',function(){
++  let ip=document.getElementById('peer').value,d=found[ip]||{name:'',id:''};
++  fetch('/update-peer?ip='+encodeURIComponent(ip)
++        +'&name='+encodeURIComponent(d.name)+'&id='+encodeURIComponent(d.id))
++    .then(()=>{
++      document.getElementById('current').textContent=
++        ip ? (d.name ? d.name+' - '+ip : ip) : 'None';
++      savedIP=ip;
++      let b=document.getElementById('save-btn');
++      b.classList.remove('btn-highlight');
++      b.textContent='Saved';
++      // The deck chip is rendered server-side, so reload to show what the
++      // peer actually reported rather than leaving a stale value on screen.
++      setTimeout(()=>{location.reload();},1200);
++    });
++});
++
++document.getElementById('autostop-btn').addEventListener('click',function(){
++  autoStop=!autoStop;
++  this.textContent=autoStop?'On':'Off';
++  fetch('/update-peer-autostop?enabled='+(autoStop?'true':'false'));
++});
++</script>
++</body>
++</html>
++)rawliteral");
++}
++
++void handleUpdatePeer() {
++    peerSetLink(server.hasArg("ip")   ? server.arg("ip")   : "",
++                server.hasArg("name") ? server.arg("name") : "",
++                server.hasArg("id")   ? server.arg("id")   : "");
++    server.send(200, "text/plain", "OK");
++}
++
++void handleUpdatePeerAutoStop() {
++    if (server.hasArg("enabled")) {
++        peerAutoStop = (server.arg("enabled") == "true");
++        preferences.putBool("peerAutoStop", peerAutoStop);
++        server.send(200, "text/plain", "OK");
++        return;
++    }
++    server.send(400, "text/plain", "Missing value");
++}
++
+ void handleStatus() {
+     String jsonResponse = "{";
+     jsonResponse += "\"platform\":\"" + String(platform == PLATFORM_MOZART ? "mozart" : "ase") + "\",";
+@@ -725,7 +1006,17 @@
+     jsonResponse += "\"feature_enabled\": " + String(haloControls ? "true" : "false") + ",";
+     jsonResponse += "\"halo_play_icon\": " + String(haloPlayIcon ? "true" : "false") + ",";    
+     jsonResponse += "\"halo_volume_controls\": " + String(haloVolumeControls ? "true" : "false") + ",";
++    jsonResponse += "\"adaptor_name\":\"" + adaptorName + "\",";
++    jsonResponse += "\"driven_by\":\"" + drivenByPeer + "\",";
+     jsonResponse += "\"mqtt_connected\":" + String(mqttConnected ? "true" : "false")+ ",";
++    jsonResponse += "\"peer_ip\":\"" + peerIP + "\",";
++    jsonResponse += "\"peer_name\":\"" + peerName + "\",";
++    jsonResponse += "\"peer_title\":\"" + peerTitle + "\",";
++    jsonResponse += "\"peer_deck\":\"" + String(peerDeck == DEVICE_RECORD ? "record"
++                                                : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\",";
++    jsonResponse += "\"peer_online\":" + String(peerOnline ? "true" : "false") + ",";
++    jsonResponse += "\"peer_playing\":" + String(peerPlaying ? "true" : "false") + ",";
++    jsonResponse += "\"peer_auto_stop\":" + String(peerAutoStop ? "true" : "false") + ",";
+     jsonResponse += "\"trigger_source\":\"" + triggerSource + "\"";            
+     jsonResponse += "}";
+ 
+@@ -837,6 +1128,10 @@
+     server.on("/discover-speakers", HTTP_GET, handleDiscoverSpeakers);
+     server.on("/playback-speaker", HTTP_GET, handlePlaybackSpeaker);
+     server.on("/update-playback-speaker", HTTP_GET, handleUpdatePlaybackSpeaker);
++    server.on("/discover-peers", HTTP_GET, handleDiscoverPeers);
++    server.on("/peer", HTTP_GET, handlePeerConfig);
++    server.on("/update-peer", HTTP_GET, handleUpdatePeer);
++    server.on("/update-peer-autostop", HTTP_GET, handleUpdatePeerAutoStop);
+     
+     server.on("/settings/reset-wifi", HTTP_GET, handleResetWifi);
+     server.on("/settings/factory-reset", HTTP_GET, handleFactoryReset);
+@@ -878,6 +1173,7 @@
+     server.on("/update-devicetype", HTTP_GET, handleUpdateDeviceType);
+     server.on("/update-haloplayicon", HTTP_GET, handleUpdateHaloPlayIcon);
+     server.on("/update-halovolume", HTTP_GET, handleUpdateHaloVolumeControls);
++    server.on("/update-name", HTTP_GET, handleUpdateAdaptorName);
+     server.on("/status", handleStatus);
+     server.on("/update-ota", HTTP_POST, handleOTAResult, handleOTAUpdate); 
+     server.begin();
+--- bg/BGAdaptor/src/webpage.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/webpage.h	2026-09-14 18:58:38.812135110 +0000
+@@ -116,7 +116,7 @@
+ <div class="page">
+   <div class="page-title">
+     <svg class="ic"><use href="#i-disc"/></svg>
+-    <h1>BGAdaptor</h1>
++    <h1 id="page-heading">BGAdaptor</h1>
+   </div>
+ 
+   <div class="card">
+@@ -154,7 +154,7 @@
+   <div id="settings-cards">
+   <div class="card">
+     <div class="card-header"><svg class="ic"><use href="#i-square-rounded-arrow-right"/></svg><h2>Type</h2></div>
+-    <div class="select-row" style="margin-bottom:0">
++    <div class="select-row">
+       <label>Connected deck</label>
+       <div class="seg" id="deviceTypeSeg">
+         <button data-type="cd" id="dtype-cd">CD</button>
+@@ -162,6 +162,14 @@
+         <button data-type="tape" id="dtype-tape">Tape</button>
+       </div>
+     </div>
++    <div class="form-group" style="margin-top:.75rem;margin-bottom:0">
++      <label for="adaptorName">Name <span class="optional">Optional</span></label>
++      <div class="input-row">
++        <input type="text" id="adaptorName" maxlength="15" placeholder="From deck type">
++        <button class="btn" id="adaptor-name-btn">Save</button>
++      </div>
++      <span class="info-text" id="adaptor-name-note" style="display:none">Saved</span>
++    </div>
+   </div>
+ 
+   <div class="card">
+@@ -225,9 +233,10 @@
+     </div>
+   </div>
+ 
+-  <div class="card">
++  <div class="card" id="halo-card">
+     <div class="card-header"><svg class="ic"><use href="#i-device-remote"/></svg><h2>Beoremote Halo</h2></div>
+-    <div class="form-group" id="halo-connect-form" style="margin-top:0;margin-bottom:1.25rem">
++    <span class="info-text" id="halo-driven-note" style="display:none"></span>
++<div class="form-group" id="halo-connect-form" style="margin-top:.75rem;margin-bottom:1.25rem">
+       <label for="halo-discover-results">Halo</label>
+       <select id="halo-discover-results" style="width:100%">
+         <option value="">Select a Halo&hellip;</option>
+@@ -268,7 +277,7 @@
+         </label>
+       </div>
+       <div class="toggle-row" id="halo-playicon-row" style="display:none">
+-        <span>Show turntable icon on the Play button</span>
++        <span>Show an icon on the Play button</span>
+         <label class="toggle">
+           <input type="checkbox" id="haloPlayIconToggle">
+           <span class="toggle-slider"></span>
+@@ -281,6 +290,10 @@
+           <span class="toggle-slider"></span>
+         </label>
+       </div>
++      <div class="select-row" style="margin-top:.75rem;margin-bottom:0">
++        <label>Peer adaptor <span class="optional">Optional</span></label>
++        <a href="/peer"><button class="btn" id="peer-btn">None</button></a>
++      </div>
+     </div>
+     <div class="action-row" id="halo-action-row" style="display:none">
+       <button class="btn btn-danger" id="halo-unlink-btn">Unlink Halo</button>
+@@ -468,9 +481,10 @@
+     document.getElementById('featureToggle').checked=d.feature_enabled;
+     document.getElementById('haloPlayIconToggle').checked=d.halo_play_icon;
+     document.getElementById('haloVolumeControlsToggle').checked=d.halo_volume_controls;
+-    // Only meaningful for a turntable with a Halo linked.
++    // Applies to any deck type now — a turntable gets its own artwork, CD
++    // and tape get the generic music icon.
+     document.getElementById('halo-playicon-row').style.display=
+-      (d.device_type==='record'&&d.halo_ip&&d.halo_ip!=='')?'flex':'none';
++      (d.halo_ip&&d.halo_ip!=='')?'flex':'none';
+     if(d.device_type&&d.device_type!==currentDeviceType)applyDeviceType(d.device_type);
+     document.getElementById('sourceSelect').value=d.trigger_source;
+ 
+@@ -491,6 +505,24 @@
+     document.getElementById('playback-speaker-row').style.display=d.product_connected?'block':'none';
+     document.getElementById('playback-speaker-btn').textContent=d.playback_speaker||'None';
+ 
++    // Leave the field alone while it is being edited, or typing gets reverted
++    // by the next status poll.
++    let an=document.getElementById('adaptorName');
++    if(document.activeElement!==an)an.value=d.adaptor_name||'';
++    savedName=d.adaptor_name||'';
++    refreshNameHighlight();
++    applyAdaptorName(d.adaptor_name||'');
++
++    // A peer adaptor only adds a second Halo page, so it belongs to the Halo
++    // card and is shown with the rest of the linked-Halo rows.
++    document.getElementById('peer-btn').textContent=
++      d.peer_ip ? ((d.peer_title||d.peer_name||d.peer_ip)+(d.peer_online?'':' (offline)')) : 'None';
++
++    // When another adaptor is driving this one, its Halo is the one showing
++    // this deck — on its second page. Leaving these controls live invites
++    // linking a Halo here that would duplicate what is already on screen.
++    applyDrivenBy(d.driven_by||'');
++
+     let hasHalo=d.halo_ip&&d.halo_ip!=='';
+     document.getElementById('halo-ip').textContent=hasHalo?d.halo_ip:'—';
+     let hsn=d.halo_serial||'';
+@@ -726,6 +758,49 @@
+   fetch('/update-halovolume?enabled='+this.checked);
+ });
+ 
++// The name also titles this page and the browser tab, so several adaptors
++// open in tabs side by side stay tellable apart.
++// Mirror the rest of the page: the button that performs the pending action is
++// highlighted, so an unsaved edit is obvious.
++let savedName='';
++function refreshNameHighlight(){
++  let dirty=document.getElementById('adaptorName').value!==savedName;
++  document.getElementById('adaptor-name-btn').classList.toggle('btn-highlight',dirty);
++}
++document.getElementById('adaptorName').addEventListener('input',refreshNameHighlight);
++
++function applyDrivenBy(name){
++  let note=document.getElementById('halo-driven-note');
++  let card=document.getElementById('halo-card');
++  let on=!!name;
++  note.textContent=on?('Halo cannot be configured, because '+name+' is already controlling it.'):'';
++  note.style.display=on?'block':'none';
++  card.querySelectorAll('input,select,button').forEach(el=>{el.disabled=on;});
++  card.style.opacity=on?'0.55':'';
++}
++
++function applyAdaptorName(name){
++  document.getElementById('page-heading').textContent=name||'BGAdaptor';
++  document.title=name?('BGAdaptor \u2014 '+name):'BGAdaptor';
++}
++
++document.getElementById('adaptor-name-btn').addEventListener('click',function(){
++  let f=document.getElementById('adaptorName'),note=document.getElementById('adaptor-name-note');
++  fetch('/update-name?title='+encodeURIComponent(f.value)).then(r=>r.text()).then(t=>{
++    f.value=t;                       // show what was actually stored after cleaning
++    savedName=t;
++    refreshNameHighlight();
++    applyAdaptorName(t);
++    note.textContent=t?'Saved \u2014 reconnecting to the Halo':'Cleared \u2014 using the deck type';
++    note.style.display='block';
++    setTimeout(()=>{note.style.display='none';},2500);
++  });
++});
++
++document.getElementById('adaptorName').addEventListener('keydown',function(e){
++  if(e.key==='Enter')document.getElementById('adaptor-name-btn').click();
++});
++
+ document.getElementById('factory-reset-btn').addEventListener('click',function(){
+   if(!confirm('Reset the adaptor?\n\nAll settings will be cleared \u2014 product, Halo, Home Assistant, deck type and WiFi credentials. The adaptor restarts and creates a BGAdaptor hotspot for setup.'))return;
+   location.href='/settings/factory-reset';
+--- bg/BGAdaptor/src/webpush.h	2026-09-14 11:53:54.153464781 +0000
++++ work/src/webpush.h	2026-09-14 17:24:57.979440812 +0000
+@@ -9,3 +9,8 @@
+ void webpushBegin();
+ void webpushLoop();
+ void broadcastBeogramState();
++
++// Name of the adaptor currently driving this one, or "" when none is. A peer
++// identifies itself on connect; the value clears when that socket drops, so
++// it is live rather than a stored setting. Browser clients never set it.
++extern String drivenByPeer;
+--- bg/BGAdaptor/src/webpush.cpp	2026-09-14 11:53:54.153464781 +0000
++++ work/src/webpush.cpp	2026-09-14 17:25:03.208668607 +0000
+@@ -1,12 +1,23 @@
+ #include "webpush.h"
++#include <ArduinoJson.h>
+ 
+ static WebsocketsServer uiServer;
+ static const int MAX_UI_CLIENTS = 4;
+ static WebsocketsClient uiClients[MAX_UI_CLIENTS];
++static bool uiClientIsPeer[MAX_UI_CLIENTS] = {false};
++String drivenByPeer;
+ 
+ static String beogramStateJson() {
+     String json = "{\"state\":\"" + beogramStateText + "\",";
+     json += "\"track\":\"" + beogramTrack + "\",";
++    // The deck type rides along so a peer adaptor learns the layout for its
++    // Halo page from the same message as the state — on connect and on every
++    // change, with no polling and no second request to time out. The browser
++    // page ignores the extra key.
++    json += "\"deck\":\"" + String(deviceType == DEVICE_RECORD ? "record"
++                                   : deviceType == DEVICE_TAPE   ? "tape" : "cd") + "\",";
++    // Sanitised at save time, so it is safe to drop into hand-built JSON.
++    json += "\"title\":\"" + adaptorName + "\",";
+     json += "\"playing\":" + String(beogramPlaying ? "true" : "false") + "}";
+     return json;
+ }
+@@ -21,16 +32,41 @@
+         for (int i = 0; i < MAX_UI_CLIENTS; i++) {
+             if (!uiClients[i].available()) {
+                 uiClients[i] = uiServer.accept();
++                uiClientIsPeer[i] = false;
+                 if (uiClients[i].available()) {
++                    // A browser never sends anything on this socket; another
++                    // adaptor announces itself, which is the only way this one
++                    // learns it is being driven.
++                    uiClients[i].onMessage([i](WebsocketsClient&, WebsocketsMessage m) {
++                        JsonDocument doc;
++                        if (deserializeJson(doc, m.data())) return;
++                        if (String(doc["role"] | "") != "peer") return;
++                        uiClientIsPeer[i] = true;
++                        String name = doc["name"] | "";
++                        drivenByPeer = name.length() ? name : String("another adaptor");
++                        Serial.println("Driven by peer: " + drivenByPeer);
++                    });
+                     uiClients[i].send(beogramStateJson());
+                 }
+                 break;
+             }
+         }
+     }
+-    // Service connected clients
++    // Service connected clients, and recompute who is driving us. Doing it
++    // from what is still connected means an adaptor that is powered off or
++    // unlinked clears the flag on its own, with nothing to time out.
++    bool peerStillHere = false;
+     for (int i = 0; i < MAX_UI_CLIENTS; i++) {
+-        if (uiClients[i].available()) uiClients[i].poll();
++        if (uiClients[i].available()) {
++            uiClients[i].poll();
++            if (uiClientIsPeer[i]) peerStillHere = true;
++        } else {
++            uiClientIsPeer[i] = false;
++        }
++    }
++    if (!peerStillHere && drivenByPeer.length()) {
++        Serial.println("Peer disconnected — no longer driven");
++        drivenByPeer = "";
+     }
+     // Push on change, flagged from processBuffer
+     if (beogramStateDirty) {

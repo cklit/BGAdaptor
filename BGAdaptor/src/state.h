@@ -57,6 +57,7 @@ extern String productIP;       // unified — replaces sseIP (ASE) / wsIP (Mozar
 extern String productSerial;     // serial number from discovery TXT records; empty for manual IP entry
 extern String productName;       // friendly name from discovery; empty for manual IP entry
 extern String haloIP;
+extern String adaptorName;   // user-given name for this adaptor ("" = derive from deck type)
 extern String haloSerial;      // serial from discovery TXT "serial"; empty for manual IP entry
 extern String playbackJid;     // Beolink JID of the secondary playback speaker ("" = off)
 extern String playbackName;    // its friendly name, for the UI

@@ -11,4 +11,5 @@ void collectService(const char* service, const char* nameKey,
 void handleDiscover();
 void handleDiscoverHalo();
 void handleDiscoverSpeakers();
+void handleDiscoverPeers();
 void checkProductRecovery();

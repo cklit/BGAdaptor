@@ -234,6 +234,7 @@ void processSSE(String message) {
             speakerExpanded = false;   // product left the source; any expansion is gone
             expandDueAt = 0;
             playbackState = STOPPED;
+            clearBeogramTrack();
             sendHexCommand(STANDBY);
             if (haloClient.available()) {
                 updateHaloPlayback(false, "");  

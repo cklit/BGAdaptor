@@ -170,6 +170,7 @@ void processWebSocketMessage(const String& message) {
         }
     } else if (message.indexOf("\"value\":\"networkStandby\"") != -1) {
         playbackState = STOPPED;
+        clearBeogramTrack();
         if (haloClient.available()) {
             updateHaloPlayback(false, "");
         }
