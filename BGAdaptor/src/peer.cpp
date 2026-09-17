@@ -324,6 +324,7 @@ void peerPushHaloState() {
 
 // ── Loop ────────────────────────────────────────────────────────────
 void peerLoop() {
+    static String announcedName;
     if (!peerConfigured()) return;
 
     // The peer link exists only to put that deck on this adaptor's Halo. With
@@ -385,9 +386,11 @@ void peerLoop() {
             JsonDocument announcement;
             announcement["role"] = "peer";
             announcement["name"] = adaptorName;
+            announcement["ip"] = WiFi.localIP().toString();
             String announcementJson;
             serializeJson(announcement, announcementJson);
             peerClient.send(announcementJson);
+            announcedName = adaptorName;
             Serial.println("Peer state websocket connected");
             peerReconnectDelay = reconnectInterval;
             peerOnline = true;
@@ -396,6 +399,17 @@ void peerLoop() {
         } else {
             peerReconnectDelay = min(peerReconnectDelay * 2, reconnectMaxInterval);
         }
+    }
+
+    if (peerClient.available() && announcedName != adaptorName) {
+        JsonDocument announcement;
+        announcement["role"] = "peer";
+        announcement["name"] = adaptorName;
+        announcement["ip"] = WiFi.localIP().toString();
+        String announcementJson;
+        serializeJson(announcement, announcementJson);
+        peerClient.send(announcementJson);
+        announcedName = adaptorName;
     }
 
     peerDrainQueue();

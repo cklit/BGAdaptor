@@ -4,6 +4,13 @@
 #include "halo.h"
 #include "ha_mqtt.h"
 
+static String pendingTrackNumber;
+static size_t pendingTrackIndex = 0;
+static bool trackDigitsOpened = false;
+static unsigned long nextTrackDigitAt = 0;
+static constexpr unsigned long trackCommandSpacingMs = 800;
+static constexpr unsigned long trackOpenSpacingMs = 50;
+
 BeogramFeedback identifyState(const uint8_t* sequence, size_t length) {
     if (debugSerial == true) {
         Serial.print("Identifying state for sequence: ");
@@ -77,11 +84,52 @@ void sendHexCommand(BeogramCommand command) {
     Serial1.write(byte);
 }
 
+bool queueTrackNumber(const String& trackNumber) {
+    bool validSingleDigit = trackNumber.length() == 1 &&
+                            trackNumber[0] >= '1' && trackNumber[0] <= '9';
+    bool validDoubleDigit = trackNumber.length() == 2 &&
+                            trackNumber[0] == '1' &&
+                            trackNumber[1] >= '0' && trackNumber[1] <= '9';
+    if (!validSingleDigit && !validDoubleDigit) return false;
+    pendingTrackNumber = trackNumber;
+    pendingTrackIndex = 0;
+    trackDigitsOpened = false;
+    nextTrackDigitAt = millis();
+    waitingForPlay = false;
+    return true;
+}
+
+void checkTrackNumberQueue() {
+    if (pendingTrackNumber.length() == 0 || millis() < nextTrackDigitAt) return;
+
+    if (!trackDigitsOpened) {
+        sendHexCommand(OPEN_FOR_DIGIT);
+        trackDigitsOpened = true;
+        nextTrackDigitAt = millis() + trackOpenSpacingMs;
+        return;
+    }
+
+    const BeogramCommand digitCommands[10] = {
+        DIGIT0, DIGIT1, DIGIT2, DIGIT3, DIGIT4,
+        DIGIT5, DIGIT6, DIGIT7, DIGIT8, DIGIT9
+    };
+    sendHexCommand(digitCommands[pendingTrackNumber[pendingTrackIndex] - '0']);
+    pendingTrackIndex++;
+    if (pendingTrackIndex >= pendingTrackNumber.length()) {
+        delayPlayAfterDigit = millis();
+        waitingForPlay = true;
+        pendingTrackNumber = "";
+        trackDigitsOpened = false;
+    } else {
+        nextTrackDigitAt = millis() + trackCommandSpacingMs;
+    }
+}
+
 void sendPlayAfterDelay() {
-    if (waitingForPlay && millis() - delayPlayAfterDigit >= 1200) {
+    if (waitingForPlay && millis() - delayPlayAfterDigit >= trackCommandSpacingMs) {
         sendHexCommand(PLAY);           
         waitingForPlay = false; // Reset flag
-        Serial.println("▶️ Sent PLAY after 1200ms delay");
+        Serial.println("Sent PLAY after 800ms delay");
     }
 }
 

@@ -1017,6 +1017,7 @@ void handleStatus() {
     doc["halo_volume_controls"] = haloVolumeControls;
     doc["adaptor_name"] = adaptorName;
     doc["driven_by"] = drivenByPeer;
+    doc["driven_by_ip"] = drivenByPeerIP;
     doc["mqtt_connected"] = mqttConnected;
     doc["peer_ip"] = peerIP;
     doc["peer_name"] = peerName;
@@ -1181,6 +1182,15 @@ void registerWebRoutes() {
     server.on("/command/standby", HTTP_POST, []() {
         sendHexCommand(STANDBY);  // STANDBY
         server.send(200, "application/json", "{\"status\":\"Standby command sent\"}");
+    });
+
+    server.on("/command/track", HTTP_POST, []() {
+        if (!server.hasArg("number") || !queueTrackNumber(server.arg("number"))) {
+            server.send(400, "application/json", "{\"status\":\"invalid track number\"}");
+            return;
+        }
+        String response = "{\"status\":\"queued\",\"track\":\"" + server.arg("number") + "\"}";
+        server.send(202, "application/json", response);
     });
     
     

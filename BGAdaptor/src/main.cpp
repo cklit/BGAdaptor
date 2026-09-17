@@ -311,6 +311,7 @@ void loop() {
     activateHaloPage();
     mqtt.loop();
     checkMQTTConnection();    
+    checkTrackNumberQueue();
 
     if (Serial.available() > 0) {
         String input = Serial.readStringUntil('\n');

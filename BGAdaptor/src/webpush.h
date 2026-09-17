@@ -14,3 +14,4 @@ void broadcastBeogramState();
 // identifies itself on connect; the value clears when that socket drops, so
 // it is live rather than a stored setting. Browser clients never set it.
 extern String drivenByPeer;
+extern String drivenByPeerIP;

@@ -25,6 +25,8 @@ static const char* htmlPage PROGMEM = R"rawliteral(
     .page-title h1{font-size:18px;font-weight:500}
     .card{background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:1.25rem 1.5rem}
     @media(prefers-color-scheme:dark){.card{background:#252525;border-color:#333}}
+    #halo-driven-note{border:2px solid #d97706}
+    @media(prefers-color-scheme:dark){#halo-driven-note{border-color:#f59e0b}}
     .card-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem}
     .card-header .ic{font-size:18px;color:#888}
     .card-header h2{font-size:15px;font-weight:500}
@@ -117,6 +119,12 @@ static const char* htmlPage PROGMEM = R"rawliteral(
   <div class="page-title">
     <svg class="ic"><use href="#i-disc"/></svg>
     <h1 id="page-heading">BGAdaptor</h1>
+  </div>
+  <div class="card" id="halo-driven-note" style="display:none">
+    <div class="link-row">
+      <svg class="ic"><use href="#i-device-remote"/></svg>
+      <span id="halo-driven-text"></span><a id="halo-driven-link" href="#" target="_blank"></a>
+    </div>
   </div>
 
   <div class="card">
@@ -262,7 +270,6 @@ static const char* htmlPage PROGMEM = R"rawliteral(
 
   <div class="card" id="halo-card">
     <div class="card-header"><svg class="ic"><use href="#i-device-remote"/></svg><h2>Beoremote Halo</h2></div>
-    <span class="info-text" id="halo-driven-note" style="display:none"></span>
 <div class="form-group" id="halo-connect-form" style="margin-top:.75rem;margin-bottom:1.25rem">
       <label for="halo-discover-results">Halo</label>
       <select id="halo-discover-results" style="width:100%">
@@ -532,6 +539,10 @@ function connectBgWs(){
     try{
       let d=JSON.parse(e.data);
       renderBeogram(d.state,d.track,d.playing);
+      if(d.driven_by!==undefined){
+        let productConnected=document.getElementById('product-status').classList.contains('connected');
+        applyDrivenBy(d.driven_by||'',productConnected,d.driven_by_ip||'');
+      }
       // Peer keys are only present when one is linked; without them the card
       // keeps whatever the last status poll put there.
       if(d.peer_deck!==undefined)renderPeer({peer_ip:'x',peer_deck:d.peer_deck,
@@ -618,7 +629,7 @@ function updateStatus(){
     // When another adaptor is driving this one, its Halo is the one showing
     // this deck — on its second page. Leaving these controls live invites
     // linking a Halo here that would duplicate what is already on screen.
-    applyDrivenBy(d.driven_by||'');
+    if(!bgWs||bgWs.readyState!==1)applyDrivenBy(d.driven_by||'',d.product_connected,d.driven_by_ip||'');
 
     let hasHalo=d.halo_ip&&d.halo_ip!=='';
     document.getElementById('halo-ip').textContent=hasHalo?d.halo_ip:'—';
@@ -874,14 +885,21 @@ function refreshNameHighlight(){
 }
 document.getElementById('adaptorName').addEventListener('input',refreshNameHighlight);
 
-function applyDrivenBy(name){
+function applyDrivenBy(name,productConnected,ip){
   let note=document.getElementById('halo-driven-note');
+  let text=document.getElementById('halo-driven-text');
+  let link=document.getElementById('halo-driven-link');
   let card=document.getElementById('halo-card');
+  let peerLinkRow=document.getElementById('peer-link-row');
   let on=!!name;
-  note.textContent=on?('Halo cannot be configured, because '+name+' is already controlling it.'):'';
+  text.textContent=on?('Configured as peer by BGAdaptor: '):'';
+  link.href=ip?'http://'+ip+'/':'#';
+  link.textContent=on?name:'';
+  link.style.display=on&&!!ip?'inline':'none';
   note.style.display=on?'block':'none';
   card.querySelectorAll('input,select,button').forEach(el=>{el.disabled=on;});
   card.style.opacity=on?'0.55':'';
+  peerLinkRow.style.display=on?'none':(productConnected?'block':'none');
 }
 
 function applyAdaptorName(name){

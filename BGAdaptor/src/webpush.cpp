@@ -7,6 +7,7 @@ static const int MAX_UI_CLIENTS = 4;
 static WebsocketsClient uiClients[MAX_UI_CLIENTS];
 static bool uiClientIsPeer[MAX_UI_CLIENTS] = {false};
 String drivenByPeer;
+String drivenByPeerIP;
 
 static String beogramStateJson() {
     JsonDocument doc;
@@ -20,6 +21,8 @@ static String beogramStateJson() {
     doc["title"] = adaptorName;
     doc["product_name"] = productName;
     doc["playing"] = beogramPlaying;
+    doc["driven_by"] = drivenByPeer;
+    doc["driven_by_ip"] = drivenByPeerIP;
     // A linked peer's deck rides along, so the page can show its controls
     // live rather than waiting for the five-second status poll. A peer's own
     // browser never sees these keys, because a peer has no peer of its own.
@@ -57,7 +60,9 @@ void webpushLoop() {
                         if (String(doc["role"] | "") != "peer") return;
                         uiClientIsPeer[i] = true;
                         String name = doc["name"] | "";
+                        drivenByPeerIP = doc["ip"] | "";
                         drivenByPeer = name.length() ? name : String("another adaptor");
+                        beogramStateDirty = true;
                         Serial.println("Driven by peer: " + drivenByPeer);
                     });
                     uiClients[i].send(beogramStateJson());
@@ -81,6 +86,8 @@ void webpushLoop() {
     if (!peerStillHere && drivenByPeer.length()) {
         Serial.println("Peer disconnected — no longer driven");
         drivenByPeer = "";
+        drivenByPeerIP = "";
+        beogramStateDirty = true;
     }
     // Push on change, flagged from processBuffer
     if (beogramStateDirty) {
