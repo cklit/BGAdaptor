@@ -134,22 +134,31 @@ static String haloPageJson(const char* pageId, const char* title, DeviceType dt,
                           : (dt == DEVICE_TAPE)   ? ">>" : ">I";
     bool icon = playIcon;
 
-    String buttons = haloButton(bPrev, prevLabel) + "," +
-                     (icon ? haloIconButton(bPlay, playIconFor(dt), "PLAY", "Stopped")
-                           : haloButton(bPlay, "Play")) + ",";
-    if (dt != DEVICE_CD) buttons += haloButton(bStop, "II") + ",";
-    buttons += haloButton(bNext, nextLabel);
+    JsonDocument page;
+    page["title"] = title;
+    page["id"] = pageId;
+    JsonArray buttons = page["buttons"].to<JsonArray>();
+
+    auto addButton = [&buttons](const String& json) {
+        JsonDocument button;
+        if (!deserializeJson(button, json)) {
+            buttons.add(button.as<JsonObjectConst>());
+        }
+    };
+
+    addButton(haloButton(bPrev, prevLabel));
+    addButton(icon ? haloIconButton(bPlay, playIconFor(dt), "PLAY", "Stopped")
+                   : haloButton(bPlay, "Play"));
+    if (dt != DEVICE_CD) addButton(haloButton(bStop, "II"));
+    addButton(haloButton(bNext, nextLabel));
     if (dt == DEVICE_RECORD) {
-        buttons += "," + (icon
-            ? haloIconButton(bStandby, "sleep", "", "")
-            : haloButton(bStandby, "Stby"));
+        addButton(icon ? haloIconButton(bStandby, "sleep", "", "")
+                       : haloButton(bStandby, "Stby"));
     }
 
-    return String("{") +
-        "\"title\": \"" + title + "\"," +
-        "\"id\": \"" + pageId + "\"," +
-        "\"buttons\": [" + buttons + "]" +
-    "}";
+    String output;
+    serializeJson(page, output);
+    return output;
 }
 
 // The Halo decides whether a configuration is new from the version string.

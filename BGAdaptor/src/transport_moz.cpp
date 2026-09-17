@@ -149,6 +149,11 @@ static bool jsonKeyEquals(JsonVariantConst node, const char* key, const char* va
     return false;
 }
 
+static bool eventDataKeyEquals(JsonDocument& doc, const char* key, const char* value) {
+    JsonObject eventData = doc["eventData"];
+    return !eventData.isNull() && eventData[key] == value;
+}
+
 // Finds the first string value for `key` anywhere in the document.
 static bool jsonFindKeyString(JsonVariantConst node, const char* key, String& out) {
     if (node.is<JsonObjectConst>()) {
@@ -195,8 +200,8 @@ void processWebSocketMessage(const String& message) {
         return;
     }
 
-    if (jsonKeyEquals(doc, "eventType", "WebSocketEventSourceChange")) {
-        if (jsonKeyEquals(doc, "id", triggerSource.c_str())) {
+    if (doc["eventType"] == "WebSocketEventSourceChange") {
+        if (eventDataKeyEquals(doc, "id", triggerSource.c_str())) {
             lineInActive = true;
             Serial.println("✅ Line-in activated");
             // The product is now on the trigger source, so there is an
@@ -218,7 +223,7 @@ void processWebSocketMessage(const String& message) {
                 }
             }
         }
-    } else if (jsonKeyEquals(doc, "value", "networkStandby")) {
+    } else if (eventDataKeyEquals(doc, "value", "networkStandby")) {
         playbackState = STOPPED;
         clearBeogramTrack();
         if (haloClient.available()) {
@@ -229,7 +234,7 @@ void processWebSocketMessage(const String& message) {
         sendHexCommand(STANDBY);
         Serial.println("🛑 Standby command detected on websocket. Sent STBY command to Beogram");
     } else if (lineInActive) {
-        if (jsonKeyEquals(doc, "value", "started")) {
+        if (eventDataKeyEquals(doc, "value", "started")) {
             // This is Mozart's own confirmation that our source is actually
             // playing — it won't join a speaker to the experience before
             // this, whether the resume was initiated here (Beogram Play,
@@ -247,24 +252,24 @@ void processWebSocketMessage(const String& message) {
                     Serial.println("▶️ Product changed state to Play from Pause or Standby. Sent PLAY command to Beogram");
                 }
             }
-        } else if (jsonKeyEquals(doc, "value", "stopped") && playbackState != STOPPED) {
+        } else if (eventDataKeyEquals(doc, "value", "stopped") && playbackState != STOPPED) {
             playbackState = PAUSED;
             sendHexCommand(STOP);
             if (haloClient.available()) {
                 updateHaloPlayback(false);
             }
             Serial.println("⏸️ Product changed state to Stopped. Sent STOP command to Beogram");
-        } else if (jsonKeyEquals(doc, "value", "paused")) {
+        } else if (eventDataKeyEquals(doc, "value", "paused")) {
             playbackState = PAUSED;
             sendHexCommand(STOP);
             if (haloClient.available()) {
                 updateHaloPlayback(false);
             }
             Serial.println("⏸️ Product changed state to Paused. Sent STOP command to Beogram");
-        } else if (jsonKeyEquals(doc, "button", "Next")) {
+        } else if (eventDataKeyEquals(doc, "button", "Next")) {
             sendHexCommand(NEXT);
             Serial.println("⏭️ Sent NEXT command to Beogram");
-        } else if (jsonKeyEquals(doc, "button", "Previous")) {
+        } else if (eventDataKeyEquals(doc, "button", "Previous")) {
             sendHexCommand(PREVIOUS);
             Serial.println("⏮️ Sent PREV command to Beogram");
         }

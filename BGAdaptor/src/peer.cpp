@@ -92,11 +92,6 @@ void peerSetLink(const String& ip, const String& name, const String& id) {
     preferences.putString("peerName", peerName);
     preferences.putString("peerId", peerId);
 
-    // Ask the peer what it is rather than making the user pick. A deck type
-    // set by hand is a setting that can be wrong, and when it is wrong the
-    // symptom is "the buttons do nothing", which is miserable to debug.
-    if (peerConfigured()) peerFetchDeckType();
-
     // Page count and layout both change, so the Halo needs the new config.
     reconnectHalo("peer linked or unlinked");
 
@@ -231,6 +226,14 @@ static void peerOnMessage(WebsocketsMessage message) {
             peerTitle = title;
             preferences.putString("peerTitle", peerTitle);
             layoutChanged = true;       // different page heading
+        }
+    }
+
+    if (peerName.length() == 0 && doc["product_name"].is<const char*>()) {
+        String name = doc["product_name"].as<String>();
+        if (name.length() > 0) {
+            peerName = name;
+            preferences.putString("peerName", peerName);
         }
     }
 
@@ -379,17 +382,17 @@ void peerLoop() {
                     peerLastPingReceived = millis();
                 }
             });
-            // Tell the peer who is driving it, so it can show that its own
-            // Halo settings are not the ones in play. adaptorName is
-            // sanitised at save time, so it is safe in hand-built JSON.
-            peerClient.send("{\"role\":\"peer\",\"name\":\"" + adaptorName + "\"}");
+            JsonDocument announcement;
+            announcement["role"] = "peer";
+            announcement["name"] = adaptorName;
+            String announcementJson;
+            serializeJson(announcement, announcementJson);
+            peerClient.send(announcementJson);
             Serial.println("Peer state websocket connected");
             peerReconnectDelay = reconnectInterval;
             peerOnline = true;
             peerLastPingReceived = millis();
             peerHaloDirty = true;
-            // Cheap moment to notice the peer's deck type was changed.
-            peerFetchDeckType();
         } else {
             peerReconnectDelay = min(peerReconnectDelay * 2, reconnectMaxInterval);
         }

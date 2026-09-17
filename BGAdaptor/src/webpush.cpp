@@ -9,30 +9,30 @@ static bool uiClientIsPeer[MAX_UI_CLIENTS] = {false};
 String drivenByPeer;
 
 static String beogramStateJson() {
-    String json = "{\"state\":\"" + beogramStateText + "\",";
-    json += "\"track\":\"" + beogramTrack + "\",";
+    JsonDocument doc;
+    doc["state"] = beogramStateText;
+    doc["track"] = beogramTrack;
     // The deck type rides along so a peer adaptor learns the layout for its
     // Halo page from the same message as the state — on connect and on every
     // change, with no polling and no second request to time out. The browser
     // page ignores the extra key.
-    json += "\"deck\":\"" + String(deviceType == DEVICE_RECORD ? "record"
-                                   : deviceType == DEVICE_TAPE   ? "tape" : "cd") + "\",";
-    // Sanitised at save time, so it is safe to drop into hand-built JSON.
-    json += "\"title\":\"" + adaptorName + "\",";
-    json += "\"playing\":" + String(beogramPlaying ? "true" : "false");
+    doc["deck"] = deviceType == DEVICE_RECORD ? "record" : deviceType == DEVICE_TAPE ? "tape" : "cd";
+    doc["title"] = adaptorName;
+    doc["product_name"] = productName;
+    doc["playing"] = beogramPlaying;
     // A linked peer's deck rides along, so the page can show its controls
     // live rather than waiting for the five-second status poll. A peer's own
     // browser never sees these keys, because a peer has no peer of its own.
     if (peerConfigured()) {
-        json += ",\"peer_online\":" + String(peerOnline ? "true" : "false");
-        json += ",\"peer_playing\":" + String(peerPlaying ? "true" : "false");
-        json += ",\"peer_state\":\"" + peerStateText + "\"";
-        json += ",\"peer_track\":\"" + peerTrack + "\"";
-        json += ",\"peer_deck\":\"" + String(peerDeck == DEVICE_RECORD ? "record"
-                                             : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\"";
-        json += ",\"peer_title\":\"" + peerTitle + "\"";
+        doc["peer_online"] = peerOnline;
+        doc["peer_playing"] = peerPlaying;
+        doc["peer_state"] = peerStateText;
+        doc["peer_track"] = peerTrack;
+        doc["peer_deck"] = peerDeck == DEVICE_RECORD ? "record" : peerDeck == DEVICE_TAPE ? "tape" : "cd";
+        doc["peer_title"] = peerTitle;
     }
-    json += "}";
+    String json;
+    serializeJson(doc, json);
     return json;
 }
 

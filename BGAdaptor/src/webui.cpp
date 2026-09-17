@@ -973,7 +973,13 @@ document.getElementById('autostop-btn').addEventListener('click',function(){
 }
 
 void handleUpdatePeer() {
-    peerSetLink(server.hasArg("ip")   ? server.arg("ip")   : "",
+    String ip = server.hasArg("ip") ? server.arg("ip") : "";
+    if (ip.length() > 0 && !isValidIPAddress(ip)) {
+        server.send(400, "text/plain", "Invalid peer IP");
+        return;
+    }
+
+    peerSetLink(ip,
                 server.hasArg("name") ? server.arg("name") : "",
                 server.hasArg("id")   ? server.arg("id")   : "");
     server.send(200, "text/plain", "OK");
@@ -990,41 +996,41 @@ void handleUpdatePeerAutoStop() {
 }
 
 void handleStatus() {
-    String jsonResponse = "{";
-    jsonResponse += "\"platform\":\"" + String(platform == PLATFORM_MOZART ? "mozart" : "ase") + "\",";
-    jsonResponse += "\"product_ip\":\"" + productIP + "\",";
-    jsonResponse += "\"product_serial\":\"" + productSerial + "\",";
-    jsonResponse += "\"product_name\":\"" + productName + "\",";
-    jsonResponse += "\"playback_speaker\":\"" + playbackName + "\",";
-    jsonResponse += "\"playback_jid\":\"" + playbackJid + "\",";
-    jsonResponse += "\"beogram_state\":\"" + beogramStateText + "\",";
-    jsonResponse += "\"beogram_track\":\"" + beogramTrack + "\",";
-    jsonResponse += String("\"beogram_playing\":") + (beogramPlaying ? "true" : "false") + ",";
-    jsonResponse += "\"product_connected\":" + String(productConnected() ? "true" : "false") + ",";
-    jsonResponse += "\"halo_ip\":\"" + haloIP + "\",";
-    jsonResponse += "\"halo_serial\":\"" + haloSerial + "\",";
-    jsonResponse += "\"halo_ws_connected\":" + String(haloClient.available() ? "true" : "false") + ",";    
-    jsonResponse += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
-    jsonResponse += "\"device_type\":\"" + String(deviceType == DEVICE_RECORD ? "record" : deviceType == DEVICE_TAPE ? "tape" : "cd") + "\",";
-    jsonResponse += "\"feature_enabled\": " + String(haloControls ? "true" : "false") + ",";
-    jsonResponse += "\"halo_play_icon\": " + String(haloPlayIcon ? "true" : "false") + ",";    
-    jsonResponse += "\"halo_volume_controls\": " + String(haloVolumeControls ? "true" : "false") + ",";
-    jsonResponse += "\"adaptor_name\":\"" + adaptorName + "\",";
-    jsonResponse += "\"driven_by\":\"" + drivenByPeer + "\",";
-    jsonResponse += "\"mqtt_connected\":" + String(mqttConnected ? "true" : "false")+ ",";
-    jsonResponse += "\"peer_ip\":\"" + peerIP + "\",";
-    jsonResponse += "\"peer_name\":\"" + peerName + "\",";
-    jsonResponse += "\"peer_title\":\"" + peerTitle + "\",";
-    jsonResponse += "\"peer_deck\":\"" + String(peerDeck == DEVICE_RECORD ? "record"
-                                                : peerDeck == DEVICE_TAPE   ? "tape" : "cd") + "\",";
-    jsonResponse += "\"peer_online\":" + String(peerOnline ? "true" : "false") + ",";
-    jsonResponse += "\"peer_playing\":" + String(peerPlaying ? "true" : "false") + ",";
-    jsonResponse += "\"peer_state\":\"" + peerStateText + "\",";
-    jsonResponse += "\"peer_track\":\"" + peerTrack + "\",";
-    jsonResponse += "\"peer_auto_stop\":" + String(peerAutoStop ? "true" : "false") + ",";
-    jsonResponse += "\"trigger_source\":\"" + triggerSource + "\"";            
-    jsonResponse += "}";
+    JsonDocument doc;
+    doc["platform"] = platform == PLATFORM_MOZART ? "mozart" : "ase";
+    doc["product_ip"] = productIP;
+    doc["product_serial"] = productSerial;
+    doc["product_name"] = productName;
+    doc["playback_speaker"] = playbackName;
+    doc["playback_jid"] = playbackJid;
+    doc["beogram_state"] = beogramStateText;
+    doc["beogram_track"] = beogramTrack;
+    doc["beogram_playing"] = beogramPlaying;
+    doc["product_connected"] = productConnected();
+    doc["halo_ip"] = haloIP;
+    doc["halo_serial"] = haloSerial;
+    doc["halo_ws_connected"] = haloClient.available();
+    doc["firmware"] = FIRMWARE_VERSION;
+    doc["device_type"] = deviceType == DEVICE_RECORD ? "record" : deviceType == DEVICE_TAPE ? "tape" : "cd";
+    doc["feature_enabled"] = haloControls;
+    doc["halo_play_icon"] = haloPlayIcon;
+    doc["halo_volume_controls"] = haloVolumeControls;
+    doc["adaptor_name"] = adaptorName;
+    doc["driven_by"] = drivenByPeer;
+    doc["mqtt_connected"] = mqttConnected;
+    doc["peer_ip"] = peerIP;
+    doc["peer_name"] = peerName;
+    doc["peer_title"] = peerTitle;
+    doc["peer_deck"] = peerDeck == DEVICE_RECORD ? "record" : peerDeck == DEVICE_TAPE ? "tape" : "cd";
+    doc["peer_online"] = peerOnline;
+    doc["peer_playing"] = peerPlaying;
+    doc["peer_state"] = peerStateText;
+    doc["peer_track"] = peerTrack;
+    doc["peer_auto_stop"] = peerAutoStop;
+    doc["trigger_source"] = triggerSource;
 
+    String jsonResponse;
+    serializeJson(doc, jsonResponse);
     server.send(200, "application/json", jsonResponse);
 }
 
