@@ -78,6 +78,20 @@ enum BeogramCommand : uint8_t {
     DIGIT0 = 0x3F
 };
 
+// ── Digit entry timing ──────────────────────────────────────────────
+// Two values, both carried over from the working remote path.
+//
+// DIGIT_GAP_MS is the pause between bytes of one entry: OPEN_FOR_DIGIT
+// to digit, and digit to the next OPEN_FOR_DIGIT. On top of it every
+// sendHexCommand() already costs ~100 ms of its own (byte, 50 ms, byte).
+//
+// DIGIT_SECOND_PRESS_MS is how long a remote press waits before PLAY,
+// so a second digit has time to arrive and re-arm the timer. It is a
+// human window, not a protocol one — the REST path knows the whole
+// number up front and does not use it.
+static const unsigned long DIGIT_GAP_MS = 50;
+static const unsigned long DIGIT_SECOND_PRESS_MS = 1200;
+
 // Tape decks speak the same Datalink but with different byte values, both
 // for commands and for feedback. sendHexCommand() translates outgoing
 // commands and identifyState() translates incoming feedback, so the rest

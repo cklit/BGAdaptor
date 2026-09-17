@@ -9,6 +9,7 @@ BeogramFeedback identifyState(const uint8_t* sequence, size_t length);
 void sendHexCommand(BeogramCommand command);
 bool queueTrackNumber(const String& trackNumber);
 void checkTrackNumberQueue();
+void cancelTrackNumberQueue();
 void processBuffer(BeogramFeedback state);
 void handleSerial1Data();
 void sendPlayAfterDelay();

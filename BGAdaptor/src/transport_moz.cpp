@@ -324,8 +324,9 @@ void processRemoteWebSocketMessage(const String& message) {
                 DIGIT5, DIGIT6, DIGIT7, DIGIT8, DIGIT9
             };
             BeogramCommand digitCommand = digitCommands[digitChar - '0'];
+            cancelTrackNumberQueue();
             sendHexCommand(OPEN_FOR_DIGIT);
-            delay(50);
+            delay(DIGIT_GAP_MS);
             sendHexCommand(digitCommand);
             delayPlayAfterDigit = millis();
             waitingForPlay = true;

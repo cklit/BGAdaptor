@@ -7,9 +7,8 @@
 static String pendingTrackNumber;
 static size_t pendingTrackIndex = 0;
 static bool trackDigitsOpened = false;
+static bool trackPlayPending = false;
 static unsigned long nextTrackDigitAt = 0;
-static constexpr unsigned long trackCommandSpacingMs = 800;
-static constexpr unsigned long trackOpenSpacingMs = 50;
 
 BeogramFeedback identifyState(const uint8_t* sequence, size_t length) {
     if (debugSerial == true) {
@@ -84,28 +83,61 @@ void sendHexCommand(BeogramCommand command) {
     Serial1.write(byte);
 }
 
+// Queue a complete track number for digit entry. Unlike a remote press,
+// the whole number is known up front, so there is nothing to disambiguate
+// here — the digits are simply played out with the spacing the deck needs.
+//
+// Two digits are accepted (1-99), but whether a deck acts on the first
+// digit before the second arrives is a property of the deck, not of this
+// code. If 20+ selects the wrong track on your hardware, that is why.
 bool queueTrackNumber(const String& trackNumber) {
-    bool validSingleDigit = trackNumber.length() == 1 &&
-                            trackNumber[0] >= '1' && trackNumber[0] <= '9';
-    bool validDoubleDigit = trackNumber.length() == 2 &&
-                            trackNumber[0] == '1' &&
-                            trackNumber[1] >= '0' && trackNumber[1] <= '9';
-    if (!validSingleDigit && !validDoubleDigit) return false;
+    size_t length = trackNumber.length();
+    if (length < 1 || length > 2) return false;
+    for (size_t i = 0; i < length; ++i) {
+        if (!isDigit(trackNumber[i])) return false;
+    }
+    if (trackNumber[0] == '0') return false;   // rejects "0", "00", "07"
+
     pendingTrackNumber = trackNumber;
     pendingTrackIndex = 0;
     trackDigitsOpened = false;
+    trackPlayPending = false;
     nextTrackDigitAt = millis();
-    waitingForPlay = false;
+    waitingForPlay = false;   // drop a PLAY still armed by a remote press
     return true;
 }
 
-void checkTrackNumberQueue() {
-    if (pendingTrackNumber.length() == 0 || millis() < nextTrackDigitAt) return;
+// A remote press mid-queue would interleave its bytes with ours and the
+// deck would see a garbled number, so the remote handlers drop the queue
+// before sending. Last input wins.
+void cancelTrackNumberQueue() {
+    if (pendingTrackNumber.length() == 0) return;
+    Serial.println("Track queue cancelled by remote input");
+    pendingTrackNumber = "";
+    pendingTrackIndex = 0;
+    trackDigitsOpened = false;
+    trackPlayPending = false;
+}
 
+void checkTrackNumberQueue() {
+    if (pendingTrackNumber.length() == 0 && !trackPlayPending) return;
+    if ((long)(millis() - nextTrackDigitAt) < 0) return;   // rollover-safe
+
+    // No second press can arrive here, so PLAY follows the last digit
+    // with only the byte gap — none of the remote's waiting window.
+    if (trackPlayPending) {
+        sendHexCommand(PLAY);
+        trackPlayPending = false;
+        Serial.println("Sent PLAY after track entry");
+        return;
+    }
+
+    // Every digit gets its own OPEN_FOR_DIGIT, matching what the remote
+    // handlers do — that sequence is the one proven on hardware.
     if (!trackDigitsOpened) {
         sendHexCommand(OPEN_FOR_DIGIT);
         trackDigitsOpened = true;
-        nextTrackDigitAt = millis() + trackOpenSpacingMs;
+        nextTrackDigitAt = millis() + DIGIT_GAP_MS;
         return;
     }
 
@@ -115,21 +147,20 @@ void checkTrackNumberQueue() {
     };
     sendHexCommand(digitCommands[pendingTrackNumber[pendingTrackIndex] - '0']);
     pendingTrackIndex++;
+    trackDigitsOpened = false;
+
     if (pendingTrackIndex >= pendingTrackNumber.length()) {
-        delayPlayAfterDigit = millis();
-        waitingForPlay = true;
         pendingTrackNumber = "";
-        trackDigitsOpened = false;
-    } else {
-        nextTrackDigitAt = millis() + trackCommandSpacingMs;
+        trackPlayPending = true;
     }
+    nextTrackDigitAt = millis() + DIGIT_GAP_MS;
 }
 
 void sendPlayAfterDelay() {
-    if (waitingForPlay && millis() - delayPlayAfterDigit >= trackCommandSpacingMs) {
-        sendHexCommand(PLAY);           
+    if (waitingForPlay && millis() - delayPlayAfterDigit >= DIGIT_SECOND_PRESS_MS) {
+        sendHexCommand(PLAY);
         waitingForPlay = false; // Reset flag
-        Serial.println("Sent PLAY after 800ms delay");
+        Serial.println("Sent PLAY after remote digit entry");
     }
 }
 

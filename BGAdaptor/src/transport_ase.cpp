@@ -215,8 +215,9 @@ void processSSE(String message) {
                     DIGIT0, DIGIT1, DIGIT2, DIGIT3, DIGIT4, DIGIT5, DIGIT6, DIGIT7, DIGIT8, DIGIT9
                 };
                 BeogramCommand digitCommand = digitCommands[key[0] - '0'];
+                cancelTrackNumberQueue();
                 sendHexCommand(OPEN_FOR_DIGIT);
-                delay(50); 
+                delay(DIGIT_GAP_MS);
                 sendHexCommand(digitCommand);
 
                 // Start the non-blocking delay
