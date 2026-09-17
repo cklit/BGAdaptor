@@ -127,14 +127,64 @@ void checkWebSocketConnection() {
     }
 }
 
+// Mozart's websocket message shapes aren't officially documented, and the
+// exact nesting depth of most fields below was inferred rather than
+// confirmed against a live product. These helpers search for a key/value
+// pair anywhere in the parsed document instead of assuming a specific
+// depth, so they match whatever the previous indexOf-based checks matched
+// without hard-coding a possibly-wrong path — and they're immune to
+// whitespace/formatting changes, unlike a literal substring search.
+static bool jsonKeyEquals(JsonVariantConst node, const char* key, const char* value) {
+    if (node.is<JsonObjectConst>()) {
+        JsonObjectConst obj = node.as<JsonObjectConst>();
+        if (obj[key] == value) return true;
+        for (JsonPairConst kv : obj) {
+            if (jsonKeyEquals(kv.value(), key, value)) return true;
+        }
+    } else if (node.is<JsonArrayConst>()) {
+        for (JsonVariantConst item : node.as<JsonArrayConst>()) {
+            if (jsonKeyEquals(item, key, value)) return true;
+        }
+    }
+    return false;
+}
+
+// Finds the first string value for `key` anywhere in the document.
+static bool jsonFindKeyString(JsonVariantConst node, const char* key, String& out) {
+    if (node.is<JsonObjectConst>()) {
+        JsonObjectConst obj = node.as<JsonObjectConst>();
+        JsonVariantConst v = obj[key];
+        if (v.is<const char*>()) {
+            out = v.as<const char*>();
+            return true;
+        }
+        for (JsonPairConst kv : obj) {
+            if (jsonFindKeyString(kv.value(), key, out)) return true;
+        }
+    } else if (node.is<JsonArrayConst>()) {
+        for (JsonVariantConst item : node.as<JsonArrayConst>()) {
+            if (jsonFindKeyString(item, key, out)) return true;
+        }
+    }
+    return false;
+}
+
 void processWebSocketMessage(const String& message) {
     unsigned long currentTime = millis();
 
-    JsonDocument volumeDoc;
-    if (!deserializeJson(volumeDoc, message) &&
-        volumeDoc["eventType"] == "WebSocketEventVolume") {
-        JsonObject level = volumeDoc["eventData"]["level"];
-        JsonObject maximum = volumeDoc["eventData"]["maximum"];
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, message);
+    if (error) {
+        // Unlike the old substring scan, a message that isn't valid JSON is
+        // now dropped rather than silently mis-scanned — log it so a real
+        // format change is visible instead of just "nothing happened".
+        Serial.println("⚠️ Mozart websocket message failed to parse as JSON: " + message);
+        return;
+    }
+
+    if (doc["eventType"] == "WebSocketEventVolume") {
+        JsonObject level = doc["eventData"]["level"];
+        JsonObject maximum = doc["eventData"]["maximum"];
         if (level["level"].is<int>()) {
             mozartVolumeLevel = level["level"].as<int>();
             if (maximum["level"].is<int>()) {
@@ -145,8 +195,8 @@ void processWebSocketMessage(const String& message) {
         return;
     }
 
-    if (message.indexOf("\"eventType\":\"WebSocketEventSourceChange\"") != -1) {
-        if (message.indexOf("\"id\":\"" + triggerSource + "\"") != -1) {
+    if (jsonKeyEquals(doc, "eventType", "WebSocketEventSourceChange")) {
+        if (jsonKeyEquals(doc, "id", triggerSource.c_str())) {
             lineInActive = true;
             Serial.println("✅ Line-in activated");
             // The product is now on the trigger source, so there is an
@@ -168,7 +218,7 @@ void processWebSocketMessage(const String& message) {
                 }
             }
         }
-    } else if (message.indexOf("\"value\":\"networkStandby\"") != -1) {
+    } else if (jsonKeyEquals(doc, "value", "networkStandby")) {
         playbackState = STOPPED;
         clearBeogramTrack();
         if (haloClient.available()) {
@@ -179,7 +229,7 @@ void processWebSocketMessage(const String& message) {
         sendHexCommand(STANDBY);
         Serial.println("🛑 Standby command detected on websocket. Sent STBY command to Beogram");
     } else if (lineInActive) {
-        if (message.indexOf("\"value\":\"started\"") != -1) {
+        if (jsonKeyEquals(doc, "value", "started")) {
             // This is Mozart's own confirmation that our source is actually
             // playing — it won't join a speaker to the experience before
             // this, whether the resume was initiated here (Beogram Play,
@@ -197,68 +247,87 @@ void processWebSocketMessage(const String& message) {
                     Serial.println("▶️ Product changed state to Play from Pause or Standby. Sent PLAY command to Beogram");
                 }
             }
-        } else if (message.indexOf("\"value\":\"stopped\"") != -1 && playbackState != STOPPED) {
+        } else if (jsonKeyEquals(doc, "value", "stopped") && playbackState != STOPPED) {
             playbackState = PAUSED;
             sendHexCommand(STOP);
             if (haloClient.available()) {
                 updateHaloPlayback(false);
             }
             Serial.println("⏸️ Product changed state to Stopped. Sent STOP command to Beogram");
-        } else if (message.indexOf("\"value\":\"paused\"") != -1) {
+        } else if (jsonKeyEquals(doc, "value", "paused")) {
             playbackState = PAUSED;
             sendHexCommand(STOP);
             if (haloClient.available()) {
                 updateHaloPlayback(false);
             }
             Serial.println("⏸️ Product changed state to Paused. Sent STOP command to Beogram");
-        } else if (message.indexOf("\"button\":\"Next\"") != -1) {
+        } else if (jsonKeyEquals(doc, "button", "Next")) {
             sendHexCommand(NEXT);
             Serial.println("⏭️ Sent NEXT command to Beogram");
-        } else if (message.indexOf("\"button\":\"Previous\"") != -1) {
+        } else if (jsonKeyEquals(doc, "button", "Previous")) {
             sendHexCommand(PREVIOUS);
             Serial.println("⏮️ Sent PREV command to Beogram");
         }
+        // "Unrecognized message" logging temporarily disabled to test
+        // whether the serial write itself was contributing to slow
+        // websocket feedback.
     }
 }
 
 void processRemoteWebSocketMessage(const String& message) {
-    if (message.indexOf("\"eventType\":\"WebSocketEventBeoRemoteButton\"") != -1 &&
-       message.indexOf("\"Type\":\"KeyPress\"") != -1 && lineInActive) {
-        if (message.indexOf("\"Key\":\"Wind\"") != -1) {
-            sendHexCommand(NEXT);
-            Serial.println("⏭️ Remote command: NEXT (Wind)");
-        } else if (message.indexOf("\"Key\":\"Rewind\"") != -1) {
-            sendHexCommand(PREVIOUS);
-            Serial.println("⏮️ Remote command: PREV (Rewind)");
-        } else if (message.indexOf("\"Key\":\"Control/Wind\"") != -1) {
-            sendHexCommand(NEXT);
-            Serial.println("⏭️ Remote command: Control/Wind");
-        } else if (message.indexOf("\"Key\":\"Control/Rewind\"") != -1) {
-            sendHexCommand(PREVIOUS);
-            Serial.println("⏮️ Remote command: Control/Rewind");
-        } else if (message.indexOf("\"Key\":\"Control/Stop\"") != -1) {
-            sendHexCommand(STOP);
-            Serial.println("⏹️ Remote command: Control/Stop");
-        } else if (message.indexOf("\"Key\":\"Control/Play\"") != -1) {
-            sendHexCommand(PLAY);
-            Serial.println("▶️ Remote command: Control/Play");
-        } else if (message.indexOf("\"Key\":\"Control/Digit") != -1) {
-            int digitIndex = message.indexOf("\"Key\":\"Control/Digit") + 20;
-            char digitChar = message[digitIndex];
-            if (isdigit(digitChar)) {
-                const BeogramCommand digitCommands[10] = {
-                    DIGIT0, DIGIT1, DIGIT2, DIGIT3, DIGIT4,
-                    DIGIT5, DIGIT6, DIGIT7, DIGIT8, DIGIT9
-                };
-                BeogramCommand digitCommand = digitCommands[digitChar - '0'];
-                sendHexCommand(OPEN_FOR_DIGIT);
-                delay(50);
-                sendHexCommand(digitCommand);
-                delayPlayAfterDigit = millis();
-                waitingForPlay = true;
-                Serial.printf("🔢 Sent Digit %c\n", digitChar);
-            }
+    if (!lineInActive) return;
+
+    JsonDocument doc;
+    // The remote socket also carries non-button frames (connection acks,
+    // etc) — those aren't JSON button events, so just drop them quietly.
+    if (deserializeJson(doc, message)) return;
+
+    if (!jsonKeyEquals(doc, "eventType", "WebSocketEventBeoRemoteButton") ||
+        !jsonKeyEquals(doc, "Type", "KeyPress")) {
+        return;
+    }
+
+    String key;
+    if (!jsonFindKeyString(doc, "Key", key)) return;
+
+    if (key == "Wind") {
+        sendHexCommand(NEXT);
+        Serial.println("⏭️ Remote command: NEXT (Wind)");
+    } else if (key == "Rewind") {
+        sendHexCommand(PREVIOUS);
+        Serial.println("⏮️ Remote command: PREV (Rewind)");
+    } else if (key == "Control/Wind") {
+        sendHexCommand(NEXT);
+        Serial.println("⏭️ Remote command: Control/Wind");
+    } else if (key == "Control/Rewind") {
+        sendHexCommand(PREVIOUS);
+        Serial.println("⏮️ Remote command: Control/Rewind");
+    } else if (key == "Control/Stop") {
+        sendHexCommand(STOP);
+        Serial.println("⏹️ Remote command: Control/Stop");
+    } else if (key == "Control/Play") {
+        sendHexCommand(PLAY);
+        Serial.println("▶️ Remote command: Control/Play");
+    } else if (key.startsWith("Control/Digit")) {
+        // Reads the trailing digit character directly from the matched key
+        // instead of indexing a fixed offset into the raw message, so this
+        // no longer breaks if the "Control/Digit" prefix length ever changes.
+        char digitChar = key.charAt(key.length() - 1);
+        if (isdigit(digitChar)) {
+            const BeogramCommand digitCommands[10] = {
+                DIGIT0, DIGIT1, DIGIT2, DIGIT3, DIGIT4,
+                DIGIT5, DIGIT6, DIGIT7, DIGIT8, DIGIT9
+            };
+            BeogramCommand digitCommand = digitCommands[digitChar - '0'];
+            sendHexCommand(OPEN_FOR_DIGIT);
+            delay(50);
+            sendHexCommand(digitCommand);
+            delayPlayAfterDigit = millis();
+            waitingForPlay = true;
+            Serial.printf("🔢 Sent Digit %c\n", digitChar);
         }
     }
+    // "Unrecognized Key" logging temporarily disabled to test whether the
+    // serial write itself was contributing to slow websocket feedback.
 }
 

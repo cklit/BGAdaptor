@@ -8,7 +8,7 @@
 #define NUMPIXELS 1
 
 // Version scheme: BGAdaptor.<year>.<month>.<day> of the build/release
-#define FIRMWARE_VERSION "BGAdaptor.2026.9.15"
+#define FIRMWARE_VERSION "BGAdaptor.2026.9.17"
 
 // ── Platform selection ──────────────────────────────────────────────
 // The adaptor supports two B&O platforms with different transports:
