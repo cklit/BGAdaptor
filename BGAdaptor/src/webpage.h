@@ -373,6 +373,8 @@ static const char* htmlPage PROGMEM = R"rawliteral(
   <div class="link-row">
     <svg class="ic"><use href="#i-brand-github"/></svg>
       <a href="https://github.com/cklit/BGAdaptor" target="_blank">View on GitHub</a>
+    <svg class="ic"><use href="#i-book-2"/></svg>
+      <a href="https://github.com/cklit/BGAdaptor/wiki" target="_blank">View Wiki</a>
     </div>
   </div>
 </div>
