@@ -13,7 +13,8 @@ commands. See more info below.
 
 <img src="/images/beogram_adaptor.jpeg" width="250px">
 
-# Read much more about how to use the BGAdaptor on the wiki page: https://github.com/cklit/BGAdaptor/wiki 
+
+## General user guide can be found on the [BGAdaptor Wiki page](https://github.com/cklit/BGAdaptor/wiki)<br><br>
 
 
 ---
