@@ -3,6 +3,7 @@
 #include "transport.h"
 #include "peer.h"
 #include <ArduinoJson.h>
+#include <cstring>
 
 const char* const HALO_PAGE_ID    = "67461a06-74b6-4114-a808-ab90e8abc03f";
 const char* const HALO_BTN_PREV    = "032ed0e4-c61f-4d22-af95-740741217d55";
@@ -14,8 +15,31 @@ const char* const HALO_BTN_STANDBY = "03481fcc-e2cc-47ba-bcae-6152bbf93482";
 ButtonUpdate pendingUpdate = {"", false, 0}; // Track pending button updates
 static bool haloAwake = true;
 
+// Page 1 (this adaptor's own deck) mirrors the dirty-flag pattern peer.cpp
+// uses for page 2: a state change swallowed while the Halo is asleep — every
+// send below is a no-op then — must be resent once it wakes, or the button
+// is left showing whatever it held before sleep. beogramPlaying/beogramTrack
+// already survive sleep untouched, so only the free-form subtitle text (not
+// derivable from those alone — see updateHaloPlayback) needs mirroring here.
+static bool haloOwnDirty = false;
+static String lastOwnSubtitle;
+static bool lastOwnHasSubtitle = false;
+
+// Marks page 1 for a full resend on the next call to pushOwnHaloState() —
+// used only by the two send functions below, on any attempt to update the
+// Play/Stop buttons while asleep.
+static void markHaloOwnDirty(const char* buttonID) {
+    if (strcmp(buttonID, HALO_BTN_PLAY) == 0 || strcmp(buttonID, HALO_BTN_STOP) == 0) {
+        haloOwnDirty = true;
+    }
+}
+
 void sendButtonUpdate(const char* buttonID, const char* state, const char* title, const char* text, const char* subtitle, int value) {
-    if (!haloAwake) return;
+    if (subtitle != nullptr && strcmp(buttonID, HALO_BTN_PLAY) == 0) {
+        lastOwnSubtitle = subtitle;
+        lastOwnHasSubtitle = true;
+    }
+    if (!haloAwake) { markHaloOwnDirty(buttonID); return; }
     JsonDocument doc;
     doc["update"]["type"] = "button";
     doc["update"]["id"] = buttonID;
@@ -33,7 +57,7 @@ void sendButtonUpdate(const char* buttonID, const char* state, const char* title
 // built-in icons. content is oneOf {text} | {icon}, so the two are
 // mutually exclusive — never send both.
 void sendButtonIconUpdate(const char* buttonID, const char* icon, const char* title, const char* subtitle) {
-    if (!haloAwake) return;
+    if (!haloAwake) { markHaloOwnDirty(buttonID); return; }
     JsonDocument doc;
     doc["update"]["type"] = "button";
     doc["update"]["id"] = buttonID;
@@ -43,6 +67,18 @@ void sendButtonIconUpdate(const char* buttonID, const char* icon, const char* ti
     String output;
     serializeJson(doc, output);
     haloClient.send(output);
+}
+
+// Rebuilds page 1's Play/Stop buttons from the current live state — the same
+// "resend everything, don't diff" approach as peerPushHaloState(). Icon mode
+// needs no cached subtitle: updateHaloPlayback derives it fresh from
+// beogramPlaying/beogramTrack. Text mode has no such derivation (the
+// subtitle is free-form — "Tray ejected", a track number, a blank " " —
+// decided at each call site), so that one piece is mirrored via
+// lastOwnSubtitle instead.
+static void pushOwnHaloState() {
+    if (!haloClient.available()) return;
+    updateHaloPlayback(beogramPlaying, lastOwnHasSubtitle ? lastOwnSubtitle.c_str() : nullptr);
 }
 
 void sendPageUpdate(const char* pageID, const char* buttonID) {
@@ -380,9 +416,10 @@ void onMessageCallback(WebsocketsMessage message) {
         String systemState = doc["event"]["state"].as<String>();
         if (systemState == "active") {
             haloAwake = true;
-            // Button updates are suppressed while asleep, so page 2 would
-            // otherwise still show whatever it held before standby.
+            // Button updates are suppressed while asleep, so both pages would
+            // otherwise still show whatever they held before standby.
             peerMarkHaloDirty();
+            haloOwnDirty = true;
             // A deck playing is what makes the controls worth showing, and
             // that is true whether it is this adaptor's or a peer's. Line-in
             // is no use as the test: a peer's deck plays through the peer's
@@ -446,11 +483,20 @@ void activateHaloPage() {
         }
 
         sendPageUpdate(HALO_PAGE_ID, HALO_BTN_PLAY);
-        updateHaloPlayback(beogramPlaying);
+        updateHaloPlayback(beogramPlaying, lastOwnHasSubtitle ? lastOwnSubtitle.c_str() : nullptr);
         if (deviceType == DEVICE_CD && beogramTrack != "-") {
             String subtitle = "Track " + beogramTrack;
             updateHaloSubtitle(subtitle.c_str());
         }
+        haloOwnDirty = false;  // just fully resynced above — the check below would be redundant
+    }
+
+    // A state change swallowed while asleep (the branch above only fires
+    // when a deck happens to still be playing at wake time) — resend it now,
+    // same as peerLoop() does for page 2.
+    if (haloOwnDirty && haloClient.available()) {
+        haloOwnDirty = false;
+        pushOwnHaloState();
     }
 
     if (haloClient.available() && haloUpdate == STATE && (millis() - haloActionTime >= haloActionDelay)) {
